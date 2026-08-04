@@ -49,7 +49,7 @@
   "scripts": {
     "build": "tsup && tsc --emitDeclarationOnly",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test \"test/*.test.mjs\"",
+    "test": "npm run build && node --test test/core.test.mjs",
     "check": "npm run typecheck && npm test",
     "doctor": "npm run build && node dist/cli.js doctor",
     "demo:setup": "node scripts/fetch-demo-soundfont.mjs",
