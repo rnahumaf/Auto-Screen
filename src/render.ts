@@ -70,7 +70,7 @@ export async function renderScreenProject(project: CaptureProject, options: Rend
   const args = [
     "-y", "-hide_banner", "-loglevel", "warning", "-i", project.rawVideoPath,
     ...audioInputArguments(preparedAudio, finalDuration),
-    "-filter_complex_script", graphPath,
+    "-/filter_complex", graphPath,
     "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-preset", "medium", "-crf", "18",
     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-t", String(finalDuration), videoPath,
   ];

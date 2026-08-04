@@ -21,3 +21,4 @@ description: Componha a timeline final do Auto-Screen com velocidade, câmera vi
 - Limitar o centro da câmera evita bordas vazias quando o alvo chega às extremidades.
 - Converter `#RRGGBBAA` para a ordem e alpha invertido do ASS.
 - Escapar dois-pontos, barras e apóstrofos do caminho ASS dentro do filtergraph.
+- Usar `-/filter_complex <arquivo>`; `-filter_complex_script` foi removido no FFmpeg 9.
