@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "recorder": {
+    "capture": { "kind": "desktop" },
+    "fps": 30,
+    "drawMouse": true,
+    "maxDurationSeconds": 30,
+    "inputControl": { "enabled": false }
+  },
+  "steps": [
+    { "type": "wait", "durationMs": 1200 },
+    { "type": "mark", "id": "reveal", "intensity": 0.7 },
+    { "type": "wait", "durationMs": 1200 }
+  ],
+  "render": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "captions": [
+      {
+        "text": "Gravação controlada por roteiro",
+        "startSeconds": 0.2,
+        "endSeconds": 2.1,
+        "anchor": "bottom",
+        "fontSize": 44,
+        "color": "#FFFFFFFF",
+        "backgroundColor": "#000000AD",
+        "transition": { "in": "fade", "out": "fade", "durationSeconds": 0.25 }
+      }
+    ],
+    "camera": [
+      { "atSeconds": 0, "target": { "kind": "desktop" }, "transition": "instant" }
+    ]
+  }
+}

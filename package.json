@@ -1,0 +1,81 @@
+{
+  "name": "auto-screen",
+  "version": "0.1.0",
+  "description": "Gravação e composição de tela sob controle agêntico para Windows.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Rodrigo Nahum",
+  "homepage": "https://github.com/rnahumaf/Auto-Screen#readme",
+  "keywords": [
+    "screen-recording",
+    "agentic",
+    "automation",
+    "video",
+    "windows",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rnahumaf/Auto-Screen.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rnahumaf/Auto-Screen/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "bin": {
+    "auto-screen": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsup && tsc --emitDeclarationOnly",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test \"test/*.test.mjs\"",
+    "check": "npm run typecheck && npm test",
+    "doctor": "npm run build && node dist/cli.js doctor",
+    "demo:setup": "node scripts/fetch-demo-soundfont.mjs",
+    "demo": "npm run build && node scripts/run-demo.mjs",
+    "test:integration": "npm run build && node scripts/run-integration.mjs",
+    "pack:check": "npm pack --dry-run",
+    "prepare": "npm run build",
+    "validate:skills": "node scripts/validate-skills.mjs"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "4.2.6",
+    "spessasynth_core": "4.3.16",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.21",
+    "auto-midi": "0.1.0",
+    "tsup": "8.5.1",
+    "typescript": "7.0.2"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
+  },
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "test"
+  }
+}

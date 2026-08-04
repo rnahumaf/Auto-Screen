@@ -1,0 +1,4 @@
+interface:
+  display_name: "Integrar áudio em vídeo"
+  short_description: "Misture áudio e MIDI em gravações."
+  default_prompt: "Use $integrate-video-audio para integrar áudio ou Auto-MIDI a uma gravação."

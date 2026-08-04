@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compor timelines de tela"
+  short_description: "Componha câmera, velocidade e legendas."
+  default_prompt: "Use $compose-screen-timelines para montar uma timeline de câmera, velocidade e legendas."
