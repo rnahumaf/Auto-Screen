@@ -1,4 +1,4 @@
 interface:
   display_name: "Capturar sessões Windows"
-  short_description: "Capture e controle a tela com segurança."
-  default_prompt: "Use $capture-windows-sessions para implementar uma sessão de captura e controle do mouse no Windows."
+  short_description: "Capture e controle entrada com segurança."
+  default_prompt: "Use $capture-windows-sessions para implementar captura física e controle seguro de mouse ou teclado no Windows."

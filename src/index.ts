@@ -11,7 +11,7 @@ export { findWindow, getDesktopMetrics, listWindows } from "./windows.js";
 export type {
   AudioManifestEntry, AudioSource, AudioTrack, CameraCue, CameraTarget, Caption, CaptionAnchor,
   CaptionTransition, CaptureProject, CaptureSource, DesktopMetrics, DoctorCheck, DoctorResult,
-  InputControlOptions, MovementEasing, MouseButton, Point, PointerSample, RecordedAction,
+  CursorMode, InputControlOptions, KeyboardKey, KeyboardModifier, MovementEasing, MouseButton, Point, PointerSample, RecordedAction,
   RecorderConfig, Rect, RenderOptions, RenderResult, ResolvedSpeedSegment, RunScriptOptions,
   ScreenManifest, ScreenScript, ScriptRenderOptions, ScriptStep, SpeedSegment, TimelineMark, WindowInfo,
 } from "./types.js";

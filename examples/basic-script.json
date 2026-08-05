@@ -3,7 +3,7 @@
   "recorder": {
     "capture": { "kind": "desktop" },
     "fps": 30,
-    "drawMouse": true,
+    "cursorMode": "software",
     "maxDurationSeconds": 30,
     "inputControl": { "enabled": false }
   },
@@ -21,7 +21,7 @@
         "text": "Gravação controlada por roteiro",
         "startSeconds": 0.2,
         "endSeconds": 2.1,
-        "anchor": "bottom",
+        "anchor": "auto",
         "fontSize": 44,
         "color": "#FFFFFFFF",
         "backgroundColor": "#000000AD",

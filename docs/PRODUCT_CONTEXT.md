@@ -4,20 +4,21 @@ Auto-Screen existe para um harness de código produzir vídeos de uso de aplicat
 
 ## Estágio atual
 
-A versão `0.1.0` é Windows-first e experimental. Ela executa mouse, registra uma captura e compõe MP4 com câmera, velocidade, legendas e faixas externas. O manifesto preserva os eventos necessários para inspeção programática.
+A versão `0.1.0` é Windows-first e experimental. Ela executa mouse e teclado autorizados, captura janelas em pixels físicos e compõe MP4 com direção automática, cursor recomposto, velocidade, legendas e faixas externas.
 
 A captura e a composição são separadas de propósito. Uma interação cara ou frágil pode ser gravada uma vez; legendas, enquadramento e música podem ser ajustados antes que o vídeo bruto seja descartado.
 
 ## Decisões de produto
 
 - Segurança explícita vale mais que conveniência: roteiros não recebem controle do mouse apenas por declararem ações.
+- Mouse e teclado têm autorizações independentes; texto digitado não entra no manifesto.
 - A timeline final governa câmera, texto e música. Retiming modifica somente a captura visual.
 - Auto-MIDI se integra por dados, não por acoplamento: Auto-Screen aceita os bytes MIDI retornados por `generateMusic()` e um SoundFont fornecido pelo usuário.
 - FFmpeg e SoundFonts não são empacotados. O usuário controla versão, licença e caminho desses recursos.
 
 ## Próximos passos
 
-- Validar qualidade e ergonomia em gravações reais de navegadores e aplicativos Windows.
+- Ampliar a matriz de gravações reais em navegadores e aplicativos Windows.
 - Adicionar captura opcional de áudio do sistema por WASAPI quando houver uma estratégia confiável de dispositivos.
-- Avaliar teclado, indicadores visuais de clique e adaptadores macOS/Linux.
+- Avaliar adaptadores macOS/Linux e cursor com temas adicionais.
 - Publicar no npm somente depois da validação do MVP e de uma decisão sobre a árvore transitiva do controlador nativo.

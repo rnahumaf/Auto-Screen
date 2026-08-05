@@ -6,7 +6,8 @@ Auto-Screen é um pacote TypeScript experimental para gravar e compor demonstra�
 
 - Leia `docs/PRODUCT_CONTEXT.md` e a skill relevante antes de alterar captura, timeline ou áudio.
 - Preserve a separação entre captura e renderização. Mouse e filesystem pertencem ao runtime Node/Windows; não crie API de browser fictícia.
-- Nunca habilite controle de entrada implicitamente. API e CLI exigem confirmações independentes, limites espaciais e cancelamento.
+- Nunca habilite controle de entrada implicitamente. Mouse e teclado têm confirmações independentes, limites espaciais, foco validado e cancelamento.
+- Capture janelas como recortes físicos de `desktop`; não reintroduza `gdigrab title=`, padding preto ou cursor nativo como padrão.
 - Invoque FFmpeg e PowerShell com arrays de argumentos, sem construir comandos de shell com entrada do usuário.
 - Mantenha tempos de velocidade na captura original; câmera, legenda e áudio usam a timeline final.
 - Não versione vídeos, áudios, MIDI ou SoundFonts. Downloads de demonstração devem ser explícitos, fixados e validados por SHA-256.
@@ -18,6 +19,7 @@ Auto-Screen é um pacote TypeScript experimental para gravar e compor demonstra�
 
 ```powershell
 npm install
+npm run check:utf8
 npm run typecheck
 npm test
 npm run doctor
@@ -25,7 +27,7 @@ npm run validate:skills
 npm run pack:check
 ```
 
-O teste de integração movimenta o mouse e só pode ser executado conscientemente com `npm run test:integration -- --allow-input-control`.
+O teste de integração movimenta o mouse e digita texto. Execute somente com `npm run test:integration -- --allow-input-control --allow-keyboard-control`.
 
 ## Contexto sob demanda
 

@@ -12,10 +12,10 @@ const HELP = `Auto-Screen 0.1.0
 Uso:
   auto-screen doctor [--ffmpeg <caminho>]
   auto-screen windows
-  auto-screen run --config <roteiro.json> --out <prefixo> --allow-input-control
+  auto-screen run --config <roteiro.json> --out <prefixo> [--allow-input-control] [--allow-keyboard-control]
   auto-screen render --project <projeto.json> --out <prefixo>
 
-O controle real do mouse nunca é liberado pelo CLI sem --allow-input-control.`;
+Mouse e teclado usam confirmações independentes: --allow-input-control e --allow-keyboard-control.`;
 
 function valueAfter(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
@@ -52,6 +52,7 @@ async function main(): Promise<void> {
     const result = await runScreenScript(script, {
       outPrefix: required(args, "--out"),
       allowInputControl: args.includes("--allow-input-control"),
+      allowKeyboardControl: args.includes("--allow-keyboard-control"),
       abortSignal: controller.signal,
     });
     console.log(`Vídeo: ${result.videoPath}`);

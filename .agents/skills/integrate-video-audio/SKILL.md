@@ -11,7 +11,7 @@ description: Integre WAV, MP3 e MIDI do Auto-MIDI aos vídeos do Auto-Screen. Us
 2. Preparar cada fonte em diretório temporário e medir a duração com FFprobe.
 3. Renderizar MIDI localmente com o SoundFont informado; nunca baixar ou empacotar SoundFont no runtime.
 4. Aplicar trim, volume, fades, atraso e loop antes do `amix`.
-5. Limitar o master, cortar na duração final e codificar AAC estéreo.
+5. Normalizar o master em aproximadamente -23 LUFS, reamostrar a 48 kHz, limitar e codificar AAC estéreo.
 6. Testar uma fonte de arquivo, silêncio e MIDI; conferir áudio não vazio com FFprobe/volumedetect.
 
 ## Gotchas

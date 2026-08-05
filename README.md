@@ -6,11 +6,11 @@ A versão em desenvolvimento é `auto-screen@0.1.0`. Ela está disponível pelo 
 
 ## O que já funciona
 
-- Captura do desktop virtual, de uma região física ou de uma janela visível.
+- Captura do desktop virtual, de uma região física ou de uma janela visível, com recorte físico compatível com DPI.
 - API imperativa e roteiro JSON usando o mesmo motor.
-- Movimento com easing, clique simples/duplo, botão esquerdo/central/direito e rolagem nos dois eixos.
+- Movimento com easing, clique simples/duplo, rolagem e teclado controlado com texto redigido no manifesto.
 - Controle de entrada desabilitado por padrão, limitado a uma região e cancelável.
-- Câmera virtual para tela, região, janela e cursor, com zoom e transições.
+- Cursor por software sem rastros, indicador de clique e câmera automática com zona morta.
 - Segmentos entre `0.25x` e `8x`, aplicados somente à captura visual.
 - Legendas posicionáveis com fonte, tamanho, cor, fundo e transições instantâneas ou fade.
 - Mixagem de WAV/MP3 e renderização de MIDI com SoundFont.
@@ -48,8 +48,10 @@ import { createScreenRecorder, renderScreenProject } from "auto-screen";
 const recorder = createScreenRecorder({
   capture: { kind: "window", title: "Meu aplicativo", match: "contains" },
   fps: 30,
+  cursorMode: "software",
   inputControl: {
     enabled: true,
+    keyboard: { enabled: true },
     allowedRegion: { x: 100, y: 100, width: 1200, height: 800 }
   }
 });
@@ -57,6 +59,8 @@ const recorder = createScreenRecorder({
 await recorder.start();
 await recorder.moveMouse({ x: 420, y: 280 }, { durationMs: 600 });
 await recorder.click({ button: "left" });
+await recorder.typeText("Demonstração segura", { intervalMs: 25 });
+await recorder.pressKey("Tab");
 recorder.mark("feature-opened", 0.8);
 await recorder.scroll({ deltaY: 6, durationMs: 500 });
 const project = await recorder.stop();
@@ -65,15 +69,11 @@ const result = await renderScreenProject(project, {
   outPrefix: "output/app-demo",
   width: 1920,
   height: 1080,
-  camera: [
-    { atSeconds: 0, target: { kind: "desktop" }, transition: "instant" },
-    { atSeconds: 1, target: { kind: "pointer", smoothing: 0.25 }, zoom: 1.6 }
-  ],
   captions: [{
     text: "Abra as configurações do aplicativo",
     startSeconds: 0.8,
     endSeconds: 3.6,
-    anchor: "bottom",
+    anchor: "auto",
     fontFamily: "Segoe UI",
     fontSize: 48,
     color: "#FFFFFFFF",
@@ -82,6 +82,10 @@ const result = await renderScreenProject(project, {
   }]
 });
 ```
+
+Quando `camera` é omitida, o renderizador cria uma direção suave a partir dos cliques e rolagens. Use `camera: []` para manter o quadro fixo. `cursorMode: "software"` é o padrão; `native` e `hidden` ficam disponíveis para diagnóstico. `drawMouse` continua aceito como alias depreciado.
+
+Texto ASCII é digitado com o intervalo configurado. Texto Unicode usa temporariamente o clipboard e restaura seu conteúdo em `finally`, evitando perdas em caracteres como `ã` e `ç`. O manifesto nunca contém o texto: registra somente quantidade de caracteres, duração e método de entrada.
 
 As coordenadas do mouse são pixels físicos do desktop virtual. Em configurações com múltiplos monitores, `x` ou `y` podem ser negativos. `allowedRegion` usa o mesmo sistema de coordenadas.
 
@@ -133,8 +137,10 @@ auto-screen run --config examples/basic-script.json --out output/basic
 Um roteiro que contenha ações reais precisa declarar `inputControl.enabled: true` e o CLI ainda exige confirmação independente:
 
 ```powershell
-auto-screen run --config roteiro-com-cliques.json --out output/demo --allow-input-control
+auto-screen run --config roteiro-com-cliques.json --out output/demo --allow-input-control --allow-keyboard-control
 ```
+
+As duas flags são independentes. Um roteiro com `typeText` ou `pressKey` também precisa declarar `inputControl.keyboard.enabled: true`.
 
 `auto-screen render --project projeto.json --out output/recomposed` recebe um `CaptureProject` salvo pela API, ou `{ "project": ..., "render": ... }`. O vídeo bruto precisa continuar no caminho registrado.
 
@@ -154,17 +160,19 @@ npm run demo       # abre uma janela local, movimenta/clica o mouse e gera MP4/J
 O teste automatizado usa vídeo sintético e nunca movimenta o mouse. O teste de integração real requer:
 
 ```powershell
-npm run test:integration -- --allow-input-control
+npm run test:integration -- --allow-input-control --allow-keyboard-control
 ```
 
 No Windows, `auto-screen.cmd` reúne essas ações em um menu.
 
 ## Segurança e limitações
 
-- A API não digita texto, captura microfone nem grava o áudio do sistema nesta versão.
+- A API não captura microfone nem grava o áudio do sistema nesta versão.
+- Antes de digitar, a janela ativa é conferida pelo provedor nativo e precisa coincidir com o alvo autorizado.
+- Texto Unicode usa o clipboard de forma transitória e restaura o texto anterior; evite alterar o clipboard concorrentemente durante automação.
 - `Ctrl+C`/`AbortSignal`, região permitida e limite de 300 segundos reduzem o risco, mas um harness continua responsável por revisar o alvo antes de habilitar cliques.
 - `gdigrab` não captura a área segura do Windows, conteúdo DRM ou janelas minimizadas; janelas protegidas também podem aparecer vazias.
-- A janela precisa permanecer visível e com título estável durante captura por título.
+- A janela precisa permanecer visível e com título estável. Ela é capturada como região física do desktop, não pela superfície `title=` do GDI.
 - O artefato intermediário é removido após uma renderização bem-sucedida, salvo quando `keepIntermediates: true` é usado.
 - A árvore de `@nut-tree-fork/nut-js` inclui Jimp para recursos de imagem que Auto-Screen não chama. O advisory moderado atual de `file-type` afeta parsing de ASF malformado nessa rota não utilizada; consulte [docs/SECURITY.md](docs/SECURITY.md).
 
