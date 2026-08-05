@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Button, Key, Point as NutPoint, clipboard, getActiveWindow, keyboard, mouse } from "@nut-tree-fork/nut-js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { probeMedia, resolveFfmpegPath } from "./ffmpeg.js";
+import { inputToPhysicalPoint, inputToPhysicalRect, physicalToInputPoint } from "./coordinates.js";
 import { spawnProcess } from "./process.js";
 import { validateRecorderConfig } from "./validation.js";
 import { resolveCaptureBounds } from "./windows.js";
@@ -143,7 +144,7 @@ export class ScreenRecorderSession {
   async moveMouse(point: Point, options: { durationMs?: number; easing?: MovementEasing } = {}): Promise<void> {
     this.assertControl(point);
     const requested = this.now();
-    const start = await mouse.getPosition();
+    const start = inputToPhysicalPoint(await mouse.getPosition(), this.dpi);
     const durationMs = options.durationMs ?? 350;
     const easing = options.easing ?? "ease-in-out";
     const steps = Math.max(1, Math.ceil(durationMs / 16));
@@ -152,14 +153,15 @@ export class ScreenRecorderSession {
       const progress = ease(index / steps, easing);
       const x = Math.round(start.x + (point.x - start.x) * progress);
       const y = Math.round(start.y + (point.y - start.y) * progress);
-      await mouse.setPosition(new NutPoint(x, y));
+      const nativePoint = physicalToInputPoint({ x, y }, this.dpi);
+      await mouse.setPosition(new NutPoint(nativePoint.x, nativePoint.y));
       if (durationMs > 0) await delay(durationMs / steps, undefined, { signal: this.config.abortSignal });
     }
     this.record("moveMouse", requested, { ...point, durationMs, easing });
   }
 
   async click(options: { button?: MouseButton; count?: 1 | 2; holdMs?: number } = {}): Promise<void> {
-    const position = await mouse.getPosition();
+    const position = inputToPhysicalPoint(await mouse.getPosition(), this.dpi);
     this.assertControl(position);
     const requested = this.now();
     const button = options.button ?? "left";
@@ -175,7 +177,7 @@ export class ScreenRecorderSession {
   }
 
   async scroll(options: { deltaX?: number; deltaY?: number; durationMs?: number }): Promise<void> {
-    const position = await mouse.getPosition();
+    const position = inputToPhysicalPoint(await mouse.getPosition(), this.dpi);
     this.assertControl(position);
     if (options.deltaX === undefined && options.deltaY === undefined) throw new TypeError("Informe deltaX ou deltaY.");
     const requested = this.now();
@@ -307,7 +309,7 @@ export class ScreenRecorderSession {
     if (!this.process || this.stopped && this.pointerPath.length > 0 || this.sampling || this.startedAt === 0) return;
     this.sampling = true;
     try {
-      const point = await mouse.getPosition();
+      const point = inputToPhysicalPoint(await mouse.getPosition(), this.dpi);
       this.pointerPath.push({ x: point.x, y: point.y, timeSeconds: this.now() });
     } catch (error) {
       this.warnings.push(`Não foi possível amostrar o cursor: ${error instanceof Error ? error.message : String(error)}`);
@@ -352,7 +354,10 @@ export class ScreenRecorderSession {
       if (!matches) throw new Error(`A janela ativa não corresponde ao alvo autorizado: ${activeTitle}.`);
     }
     const allowed = control.allowedRegion ?? this.bounds;
-    const activeRect = { x: activeRegion.left, y: activeRegion.top, width: activeRegion.width, height: activeRegion.height };
+    const activeRect = inputToPhysicalRect(
+      { x: activeRegion.left, y: activeRegion.top, width: activeRegion.width, height: activeRegion.height },
+      this.dpi,
+    );
     if (!allowed || !intersects(allowed, activeRect)) {
       throw new RangeError("A janela em primeiro plano está fora da região autorizada para teclado.");
     }

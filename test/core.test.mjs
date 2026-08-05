@@ -11,10 +11,27 @@ import {
   cleanupScreenProject,
   probeMedia,
   renderScreenProject,
+  inputToPhysicalPoint,
+  inputToPhysicalRect,
+  physicalToInputPoint,
   runScreenScript,
   sourceToOutputTime,
   validateScreenScript,
 } from "../dist/index.js";
+
+test("converte coordenadas físicas e lógicas entre 100% e 200% de DPI", () => {
+  for (const dpi of [96, 120, 144, 168, 192]) {
+    const physical = { x: -640, y: 900 };
+    const logical = physicalToInputPoint(physical, dpi);
+    const roundTrip = inputToPhysicalPoint(logical, dpi);
+    const tolerance = dpi / 96;
+    assert.ok(Math.abs(roundTrip.x - physical.x) <= tolerance);
+    assert.ok(Math.abs(roundTrip.y - physical.y) <= tolerance);
+  }
+  assert.deepEqual(inputToPhysicalRect({ x: -100, y: 20, width: 800, height: 600 }, 144), {
+    x: -150, y: 30, width: 1200, height: 900,
+  });
+});
 
 test("mapeia segmentos de velocidade sem lacunas", () => {
   const map = buildSpeedMap(10, [{ startSeconds: 2, endSeconds: 6, rate: 2 }]);

@@ -10,11 +10,12 @@ function helperPath(): string {
   return resolve(moduleDirectory, "..", "assets", "windows-helper.ps1");
 }
 
-async function runHelper(command: "metrics" | "windows"): Promise<unknown> {
+async function runHelper(command: "metrics" | "windows", point?: { x: number; y: number }): Promise<unknown> {
   if (process.platform !== "win32") throw new Error("Auto-Screen 0.1.0 oferece captura somente no Windows.");
   const script = helperPath();
   await access(script);
   const arguments_ = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Command", command];
+  if (point) arguments_.push("-X", String(Math.round(point.x)), "-Y", String(Math.round(point.y)));
   const candidates = [process.env.AUTO_SCREEN_POWERSHELL_PATH, "pwsh.exe", "powershell.exe"].filter((value): value is string => Boolean(value));
   let lastError: unknown;
   for (const executable of candidates) {
@@ -53,6 +54,11 @@ export async function getDesktopMetrics(): Promise<DesktopMetrics> {
   };
 }
 
+export async function getDpiAtPoint(point: { x: number; y: number }): Promise<number> {
+  const value = await runHelper("metrics", point) as Record<string, number>;
+  return value.dpi ?? 96;
+}
+
 export async function listWindows(): Promise<WindowInfo[]> {
   const value = await runHelper("windows");
   const rows = Array.isArray(value) ? value : value ? [value] : [];
@@ -73,7 +79,10 @@ export async function findWindow(title: string, match: "exact" | "contains" = "c
 }
 
 export async function resolveCaptureBounds(source: CaptureSource): Promise<{ rect: Rect; dpi: number; input: "desktop" }> {
-  if (source.kind === "region") return { rect: source.rect, dpi: 96, input: "desktop" };
+  if (source.kind === "region") {
+    const center = { x: source.rect.x + source.rect.width / 2, y: source.rect.y + source.rect.height / 2 };
+    return { rect: source.rect, dpi: await getDpiAtPoint(center), input: "desktop" };
+  }
   if (source.kind === "window") {
     const window = await findWindow(source.title, source.match);
     return { rect: window.rect, dpi: window.dpi, input: "desktop" };

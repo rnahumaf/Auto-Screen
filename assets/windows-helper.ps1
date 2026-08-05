@@ -1,6 +1,8 @@
 param(
   [ValidateSet("metrics", "windows")]
-  [string]$Command = "metrics"
+  [string]$Command = "metrics",
+  [int]$X = 0,
+  [int]$Y = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +19,8 @@ public static class AutoScreenNative {
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
 
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
@@ -28,12 +32,23 @@ public static class AutoScreenNative {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT point, uint flags);
+    [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr monitor, int dpiType, out uint dpiX, out uint dpiY);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out RECT rect, int size);
 
     public static bool GetVisualWindowRect(IntPtr hWnd, out RECT rect) {
         const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
         if (DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf(typeof(RECT))) == 0) return true;
         return GetWindowRect(hWnd, out rect);
+    }
+
+    public static uint GetDpiAt(int x, int y) {
+        POINT point = new POINT { X = x, Y = y };
+        IntPtr monitor = MonitorFromPoint(point, 2);
+        uint dpiX;
+        uint dpiY;
+        if (monitor != IntPtr.Zero && GetDpiForMonitor(monitor, 0, out dpiX, out dpiY) == 0) return dpiX;
+        return 96;
     }
 
 }
@@ -51,7 +66,7 @@ if ($Command -eq "metrics") {
     y = [AutoScreenNative]::GetSystemMetrics(77)
     width = [AutoScreenNative]::GetSystemMetrics(78)
     height = [AutoScreenNative]::GetSystemMetrics(79)
-    dpi = 96
+    dpi = [int][AutoScreenNative]::GetDpiAt($X, $Y)
   }
   $result | ConvertTo-Json -Compress
   exit 0

@@ -3,6 +3,7 @@ export { buildAssDocument } from "./captions.js";
 export { runDoctor } from "./doctor.js";
 export { probeMedia } from "./ffmpeg.js";
 export { cleanupScreenProject, createScreenRecorder, ScreenRecorderSession } from "./recorder.js";
+export { inputToPhysicalPoint, inputToPhysicalRect, physicalToInputPoint } from "./coordinates.js";
 export { renderScreenProject } from "./render.js";
 export { loadScreenScript, runScreenScript } from "./script.js";
 export { buildSpeedMap, outputDuration, sourceToOutputTime } from "./timeline.js";
