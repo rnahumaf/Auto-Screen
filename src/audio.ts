@@ -149,6 +149,6 @@ export function audioFilterGraph(tracks: PreparedAudio[], outputDurationSeconds:
     ];
     lines.push(`[${index + 1}:a]${filters.join(",")}[a${index}]`);
   }
-  lines.push(`${tracks.map((_, index) => `[a${index}]`).join("")}amix=inputs=${tracks.length}:duration=longest:normalize=0,alimiter=limit=0.95,atrim=duration=${outputDurationSeconds}[aout]`);
+  lines.push(`${tracks.map((_, index) => `[a${index}]`).join("")}amix=inputs=${tracks.length}:duration=longest:normalize=0,loudnorm=I=-23:LRA=7:TP=-1.5,aresample=48000,alimiter=limit=0.95,atrim=duration=${outputDurationSeconds}[aout]`);
   return lines;
 }

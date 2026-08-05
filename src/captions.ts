@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
-import type { Caption, CaptionAnchor, Point } from "./types.js";
+import { sourceToOutputTime } from "./timeline.js";
+import type { Caption, CaptionAnchor, CaptureProject, Point, ResolvedSpeedSegment } from "./types.js";
 
 const DEFAULT_FONT = "Segoe UI";
 const DEFAULT_FONT_SIZE = 48;
@@ -34,7 +35,7 @@ function assTime(seconds: number): string {
 }
 
 function anchorPosition(anchor: CaptionAnchor, width: number, height: number, padding: number): { alignment: number; point: Point } {
-  const map: Record<Exclude<CaptionAnchor, "custom">, { alignment: number; point: Point }> = {
+  const map: Record<Exclude<CaptionAnchor, "custom" | "auto">, { alignment: number; point: Point }> = {
     "bottom-left": { alignment: 1, point: { x: padding, y: height - padding } },
     bottom: { alignment: 2, point: { x: width / 2, y: height - padding } },
     "bottom-right": { alignment: 3, point: { x: width - padding, y: height - padding } },
@@ -45,7 +46,9 @@ function anchorPosition(anchor: CaptionAnchor, width: number, height: number, pa
     top: { alignment: 8, point: { x: width / 2, y: padding } },
     "top-right": { alignment: 9, point: { x: width - padding, y: padding } },
   };
-  return anchor === "custom" ? { alignment: 5, point: { x: width / 2, y: height / 2 } } : map[anchor];
+  if (anchor === "custom") return { alignment: 5, point: { x: width / 2, y: height / 2 } };
+  if (anchor === "auto") return map.bottom;
+  return map[anchor];
 }
 
 function escapeAssText(text: string): string {
@@ -73,9 +76,9 @@ export function buildAssDocument(captions: Caption[], width: number, height: num
   const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${DEFAULT_FONT},${DEFAULT_FONT_SIZE},${assColor(DEFAULT_COLOR)},${assColor(DEFAULT_COLOR)},${assColor(DEFAULT_BACKGROUND)},${assColor(DEFAULT_BACKGROUND)},0,0,0,0,100,100,0,0,3,14,0,2,40,40,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
   const events = captions.map((caption, index) => {
     if (caption.endSeconds <= caption.startSeconds) throw new RangeError(`Legenda ${caption.id ?? index} tem intervalo inválido.`);
-    const fontSize = caption.fontSize ?? DEFAULT_FONT_SIZE;
+    const fontSize = caption.fontSize ?? Math.max(28, Math.min(64, Math.round(height * 0.045)));
     const padding = caption.padding ?? 16;
-    const anchor = caption.anchor ?? "bottom";
+    const anchor = caption.anchor ?? "auto";
     const placement = anchorPosition(anchor, width, height, Math.max(24, padding * 2));
     const point = anchor === "custom" ? caption.position : placement.point;
     if (!point) throw new TypeError(`Legenda ${caption.id ?? index} exige uma posição customizada.`);
@@ -98,6 +101,25 @@ export function buildAssDocument(captions: Caption[], width: number, height: num
     return `Dialogue: 0,${assTime(caption.startSeconds)},${assTime(caption.endSeconds)},Default,${caption.id ?? `caption-${index + 1}`},0,0,0,,{${tags}}${escapeAssText(wrapped)}`;
   });
   return `${header}\n${events.join("\n")}\n`;
+}
+
+export function resolveAutomaticCaptionAnchors(
+  captions: Caption[], project: CaptureProject, speedMap: ResolvedSpeedSegment[],
+): Caption[] {
+  const pointer = project.pointerPath.map((sample) => ({
+    ...sample,
+    outputTime: sourceToOutputTime(sample.timeSeconds, speedMap),
+  }));
+  return captions.map((caption) => {
+    if (caption.anchor !== undefined && caption.anchor !== "auto") return caption;
+    const midpoint = (caption.startSeconds + caption.endSeconds) / 2;
+    let closest = pointer[0];
+    for (const sample of pointer) {
+      if (!closest || Math.abs(sample.outputTime - midpoint) < Math.abs(closest.outputTime - midpoint)) closest = sample;
+    }
+    const localY = closest ? closest.y - project.capture.bounds.y : project.capture.bounds.height / 2;
+    return { ...caption, anchor: localY >= project.capture.bounds.height / 2 ? "top" : "bottom" };
+  });
 }
 
 export async function writeAssFile(path: string, captions: Caption[], width: number, height: number): Promise<void> {

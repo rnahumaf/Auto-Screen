@@ -16,11 +16,18 @@ export type CaptureSource =
 export interface InputControlOptions {
   enabled?: boolean;
   allowedRegion?: Rect;
+  keyboard?: {
+    enabled?: boolean;
+  };
 }
+
+export type CursorMode = "software" | "native" | "hidden";
 
 export interface RecorderConfig {
   capture?: CaptureSource;
   fps?: number;
+  cursorMode?: CursorMode;
+  /** @deprecated Use cursorMode. */
   drawMouse?: boolean;
   ffmpegPath?: string;
   tempDirectory?: string;
@@ -31,11 +38,16 @@ export interface RecorderConfig {
 
 export type MouseButton = "left" | "middle" | "right";
 export type MovementEasing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
+export type KeyboardKey = "Escape" | "Tab" | "Enter" | "Space" | "Backspace" | "Delete" |
+  "Home" | "End" | "PageUp" | "PageDown" | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
+export type KeyboardModifier = "Alt" | "Control" | "Shift" | "Meta";
 
 export type ScriptStep =
   | { type: "moveMouse"; x: number; y: number; durationMs?: number; easing?: MovementEasing }
   | { type: "click"; button?: MouseButton; count?: 1 | 2; holdMs?: number }
   | { type: "scroll"; deltaX?: number; deltaY?: number; durationMs?: number }
+  | { type: "typeText"; text: string; intervalMs?: number }
+  | { type: "pressKey"; key: KeyboardKey; modifiers?: KeyboardModifier[] }
   | { type: "wait"; durationMs: number }
   | { type: "mark"; id: string; intensity?: number };
 
@@ -74,6 +86,7 @@ export type CaptionAnchor =
   | "bottom-left"
   | "bottom"
   | "bottom-right"
+  | "auto"
   | "custom";
 
 export interface CaptionTransition {
@@ -128,6 +141,11 @@ export interface RenderOptions {
   camera?: CameraCue[];
   speed?: SpeedSegment[];
   audio?: AudioTrack[];
+  cursor?: {
+    size?: number;
+    clickIndicator?: boolean;
+    clickColor?: string;
+  };
   keepIntermediates?: boolean;
 }
 
@@ -161,7 +179,10 @@ export interface CaptureProject {
     bounds: Rect;
     fps: number;
     drawMouse: boolean;
+    cursorMode: CursorMode;
     dpi: number;
+    requestedBounds?: Rect;
+    encodedSize?: { width: number; height: number };
   };
   rawDurationSeconds: number;
   actions: RecordedAction[];
@@ -197,6 +218,13 @@ export interface ScreenManifest {
   marks: TimelineMark[];
   speed: ResolvedSpeedSegment[];
   camera: CameraCue[];
+  cameraGenerated: boolean;
+  cursor: {
+    mode: CursorMode;
+    size: number;
+    clickIndicator: boolean;
+    clickColor: string;
+  };
   captions: Caption[];
   audio: AudioManifestEntry[];
   warnings: string[];
@@ -222,6 +250,7 @@ export interface ScreenScript {
 export interface RunScriptOptions {
   outPrefix: string;
   allowInputControl?: boolean;
+  allowKeyboardControl?: boolean;
   abortSignal?: AbortSignal;
 }
 

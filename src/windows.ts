@@ -14,18 +14,35 @@ async function runHelper(command: "metrics" | "windows"): Promise<unknown> {
   if (process.platform !== "win32") throw new Error("Auto-Screen 0.1.0 oferece captura somente no Windows.");
   const script = helperPath();
   await access(script);
-  const result = await runProcess("powershell.exe", [
-    "-NoLogo",
-    "-NoProfile",
-    "-NonInteractive",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    script,
-    "-Command",
-    command,
-  ]);
-  return JSON.parse(result.stdout.trim()) as unknown;
+  const arguments_ = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Command", command];
+  const candidates = [process.env.AUTO_SCREEN_POWERSHELL_PATH, "pwsh.exe", "powershell.exe"].filter((value): value is string => Boolean(value));
+  let lastError: unknown;
+  for (const executable of candidates) {
+    try {
+      const result = await runProcess(executable, arguments_);
+      return JSON.parse(result.stdout.trim()) as unknown;
+    } catch (error) {
+      lastError = error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  throw lastError ?? new Error("PowerShell não encontrado.");
+}
+
+function parseWindow(row: unknown): WindowInfo {
+  const item = row as Record<string, unknown>;
+  return {
+    title: String(item.title ?? ""),
+    processId: Number(item.processId ?? 0),
+    handle: String(item.handle ?? "0"),
+    rect: {
+      x: Number(item.x ?? 0),
+      y: Number(item.y ?? 0),
+      width: Number(item.width ?? 0),
+      height: Number(item.height ?? 0),
+    },
+    dpi: Number(item.dpi ?? 96),
+  };
 }
 
 export async function getDesktopMetrics(): Promise<DesktopMetrics> {
@@ -39,21 +56,7 @@ export async function getDesktopMetrics(): Promise<DesktopMetrics> {
 export async function listWindows(): Promise<WindowInfo[]> {
   const value = await runHelper("windows");
   const rows = Array.isArray(value) ? value : value ? [value] : [];
-  return rows.map((row) => {
-    const item = row as Record<string, unknown>;
-    return {
-      title: String(item.title ?? ""),
-      processId: Number(item.processId ?? 0),
-      handle: String(item.handle ?? "0"),
-      rect: {
-        x: Number(item.x ?? 0),
-        y: Number(item.y ?? 0),
-        width: Number(item.width ?? 0),
-        height: Number(item.height ?? 0),
-      },
-      dpi: Number(item.dpi ?? 96),
-    };
-  }).filter((window) => window.rect.width > 0 && window.rect.height > 0);
+  return rows.map(parseWindow).filter((window) => window.rect.width > 0 && window.rect.height > 0);
 }
 
 export async function findWindow(title: string, match: "exact" | "contains" = "contains"): Promise<WindowInfo> {
@@ -69,11 +72,11 @@ export async function findWindow(title: string, match: "exact" | "contains" = "c
   return candidates[0] as WindowInfo;
 }
 
-export async function resolveCaptureBounds(source: CaptureSource): Promise<{ rect: Rect; dpi: number; input: string }> {
+export async function resolveCaptureBounds(source: CaptureSource): Promise<{ rect: Rect; dpi: number; input: "desktop" }> {
   if (source.kind === "region") return { rect: source.rect, dpi: 96, input: "desktop" };
   if (source.kind === "window") {
     const window = await findWindow(source.title, source.match);
-    return { rect: window.rect, dpi: window.dpi, input: `title=${window.title}` };
+    return { rect: window.rect, dpi: window.dpi, input: "desktop" };
   }
   const desktop = await getDesktopMetrics();
   return { rect: desktop.rect, dpi: desktop.dpi, input: "desktop" };

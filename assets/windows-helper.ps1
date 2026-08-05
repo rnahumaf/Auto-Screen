@@ -19,6 +19,7 @@ public static class AutoScreenNative {
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
@@ -27,10 +28,22 @@ public static class AutoScreenNative {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
+    [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out RECT rect, int size);
+
+    public static bool GetVisualWindowRect(IntPtr hWnd, out RECT rect) {
+        const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+        if (DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out rect, Marshal.SizeOf(typeof(RECT))) == 0) return true;
+        return GetWindowRect(hWnd, out rect);
+    }
+
 }
 "@
 
-[void][AutoScreenNative]::SetProcessDPIAware()
+try {
+  [void][AutoScreenNative]::SetProcessDpiAwarenessContext([IntPtr]::new(-4))
+} catch {
+  [void][AutoScreenNative]::SetProcessDPIAware()
+}
 
 if ($Command -eq "metrics") {
   $result = [ordered]@{
@@ -44,21 +57,18 @@ if ($Command -eq "metrics") {
   exit 0
 }
 
-$items = [System.Collections.Generic.List[object]]::new()
-$callback = [AutoScreenNative+EnumWindowsProc]{
-  param([IntPtr]$handle, [IntPtr]$state)
-  if (-not [AutoScreenNative]::IsWindowVisible($handle)) { return $true }
+function Convert-Window([IntPtr]$handle) {
+  if ($handle -eq [IntPtr]::Zero) { return $null }
   $length = [AutoScreenNative]::GetWindowTextLength($handle)
-  if ($length -le 0) { return $true }
-  $builder = [System.Text.StringBuilder]::new($length + 1)
+  $builder = [System.Text.StringBuilder]::new([Math]::Max(1, $length + 1))
   [void][AutoScreenNative]::GetWindowText($handle, $builder, $builder.Capacity)
   $rect = [AutoScreenNative+RECT]::new()
-  if (-not [AutoScreenNative]::GetWindowRect($handle, [ref]$rect)) { return $true }
+  if (-not [AutoScreenNative]::GetVisualWindowRect($handle, [ref]$rect)) { return $null }
   [uint32]$processId = 0
   [void][AutoScreenNative]::GetWindowThreadProcessId($handle, [ref]$processId)
   $dpi = 96
   try { $dpi = [int][AutoScreenNative]::GetDpiForWindow($handle) } catch { $dpi = 96 }
-  $items.Add([ordered]@{
+  return [ordered]@{
     title = $builder.ToString()
     processId = [int]$processId
     handle = $handle.ToInt64().ToString()
@@ -67,7 +77,17 @@ $callback = [AutoScreenNative+EnumWindowsProc]{
     width = $rect.Right - $rect.Left
     height = $rect.Bottom - $rect.Top
     dpi = $dpi
-  })
+  }
+}
+
+
+$items = [System.Collections.Generic.List[object]]::new()
+$callback = [AutoScreenNative+EnumWindowsProc]{
+  param([IntPtr]$handle, [IntPtr]$state)
+  if (-not [AutoScreenNative]::IsWindowVisible($handle)) { return $true }
+  $item = Convert-Window $handle
+  if ($null -eq $item -or [string]::IsNullOrWhiteSpace($item.title)) { return $true }
+  $items.Add($item)
   return $true
 }
 [void][AutoScreenNative]::EnumWindows($callback, [IntPtr]::Zero)

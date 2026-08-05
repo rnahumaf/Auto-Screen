@@ -12,16 +12,28 @@ export async function loadScreenScript(path: string): Promise<ScreenScript> {
 
 export async function runScreenScript(scriptInput: ScreenScript | unknown, options: RunScriptOptions): Promise<RenderResult> {
   const script = validateScreenScript(scriptInput);
-  const requestedControl = script.recorder?.inputControl?.enabled === true;
-  if (requestedControl && !options.allowInputControl) {
+  const hasMouseSteps = script.steps.some((step) => step.type === "moveMouse" || step.type === "click" || step.type === "scroll");
+  const hasKeyboardSteps = script.steps.some((step) => step.type === "typeText" || step.type === "pressKey");
+  const requestedMouseControl = script.recorder?.inputControl?.enabled === true && hasMouseSteps;
+  const requestedKeyboardControl = script.recorder?.inputControl?.enabled === true &&
+    script.recorder.inputControl.keyboard?.enabled === true && hasKeyboardSteps;
+  if (requestedMouseControl && !options.allowInputControl) {
     throw new Error("O roteiro solicita controle do mouse; confirme com allowInputControl: true.");
+  }
+  if (requestedKeyboardControl && !options.allowKeyboardControl) {
+    throw new Error("O roteiro solicita controle do teclado; confirme com allowKeyboardControl: true.");
   }
   const recorderConfig = {
     ...(script.recorder ?? {}),
     ...(options.abortSignal === undefined ? {} : { abortSignal: options.abortSignal }),
     inputControl: {
       ...(script.recorder?.inputControl ?? {}),
-      enabled: requestedControl && options.allowInputControl === true,
+      enabled: (requestedMouseControl && options.allowInputControl === true) ||
+        (requestedKeyboardControl && options.allowKeyboardControl === true),
+      keyboard: {
+        ...(script.recorder?.inputControl?.keyboard ?? {}),
+        enabled: requestedKeyboardControl && options.allowKeyboardControl === true,
+      },
     },
   };
   const session = createScreenRecorder(recorderConfig);
@@ -41,6 +53,12 @@ export async function runScreenScript(scriptInput: ScreenScript | unknown, optio
         ...(step.deltaX === undefined ? {} : { deltaX: step.deltaX }),
         ...(step.deltaY === undefined ? {} : { deltaY: step.deltaY }),
         ...(step.durationMs === undefined ? {} : { durationMs: step.durationMs }),
+      });
+      else if (step.type === "typeText") await session.typeText(step.text, {
+        ...(step.intervalMs === undefined ? {} : { intervalMs: step.intervalMs }),
+      });
+      else if (step.type === "pressKey") await session.pressKey(step.key, {
+        ...(step.modifiers === undefined ? {} : { modifiers: step.modifiers }),
       });
       else if (step.type === "wait") await session.wait(step.durationMs);
       else session.mark(step.id, step.intensity);

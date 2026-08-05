@@ -14,11 +14,13 @@ const captureSchema = z.discriminatedUnion("kind", [
 const inputControlSchema = z.object({
   enabled: z.boolean().optional(),
   allowedRegion: rectSchema.optional(),
+  keyboard: z.object({ enabled: z.boolean().optional() }).strict().optional(),
 }).strict();
 
 const recorderSchema = z.object({
   capture: captureSchema.optional(),
   fps: finite.int().min(1).max(120).optional(),
+  cursorMode: z.enum(["software", "native", "hidden"]).optional(),
   drawMouse: z.boolean().optional(),
   ffmpegPath: z.string().min(1).optional(),
   tempDirectory: z.string().min(1).optional(),
@@ -43,6 +45,15 @@ const stepSchema = z.discriminatedUnion("type", [
     type: z.literal("scroll"), deltaX: finite.optional(), deltaY: finite.optional(),
     durationMs: nonNegative.max(60_000).optional(),
   }).strict().refine((value) => value.deltaX !== undefined || value.deltaY !== undefined, "Informe deltaX ou deltaY."),
+  z.object({
+    type: z.literal("typeText"), text: z.string().min(1).max(4_096),
+    intervalMs: nonNegative.max(1_000).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("pressKey"),
+    key: z.enum(["Escape", "Tab", "Enter", "Space", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]),
+    modifiers: z.array(z.enum(["Alt", "Control", "Shift", "Meta"])).max(4).optional(),
+  }).strict(),
   z.object({ type: z.literal("wait"), durationMs: nonNegative.max(3_600_000) }).strict(),
   z.object({ type: z.literal("mark"), id: z.string().min(1), intensity: finite.min(0).max(1).optional() }).strict(),
 ]);
@@ -69,7 +80,7 @@ const transitionSchema = z.object({
 }).strict();
 const captionSchema = z.object({
   id: z.string().min(1).optional(), text: z.string().min(1), startSeconds: nonNegative, endSeconds: positive,
-  anchor: z.enum(["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right", "custom"]).optional(),
+  anchor: z.enum(["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right", "auto", "custom"]).optional(),
   position: z.object({ x: finite, y: finite }).strict().optional(),
   fontFamily: z.string().min(1).optional(), fontSize: finite.min(8).max(300).optional(),
   color: z.string().min(1).optional(), backgroundColor: z.string().min(1).optional(),
@@ -96,6 +107,11 @@ const renderSchema = z.object({
   fps: finite.int().min(1).max(120).optional(), ffmpegPath: z.string().min(1).optional(),
   captions: z.array(captionSchema).max(1_000).optional(), camera: z.array(cameraSchema).max(10_000).optional(),
   speed: z.array(speedSchema).max(1_000).optional(), audio: z.array(audioTrackSchema).max(64).optional(),
+  cursor: z.object({
+    size: finite.int().min(12).max(128).optional(),
+    clickIndicator: z.boolean().optional(),
+    clickColor: z.string().regex(/^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/).optional(),
+  }).strict().optional(),
   keepIntermediates: z.boolean().optional(),
 }).strict();
 

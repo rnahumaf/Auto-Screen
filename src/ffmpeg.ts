@@ -56,9 +56,12 @@ export async function checkFfmpeg(ffmpegPath = "ffmpeg"): Promise<DoctorCheck[]>
   const capabilities = [
     ["gdigrab", deviceText.includes("gdigrab")],
     ["zoompan", filterText.includes("zoompan")],
+    ["overlay/geq", filterText.includes(" overlay ") && filterText.includes(" geq ")],
+    ["crop/scale", filterText.includes(" crop ") && filterText.includes(" scale ")],
     ["subtitles/ass", filterText.includes("subtitles") && filterText.includes(" ass ")],
     ["setpts", filterText.includes("setpts")],
     ["amix", filterText.includes("amix")],
+    ["loudnorm", filterText.includes("loudnorm")],
     ["libx264", encoderText.includes("libx264")],
     ["aac", /\baac\b/.test(encoderText)],
   ] as const;

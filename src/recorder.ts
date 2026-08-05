@@ -4,20 +4,21 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
-import { Button, Point as NutPoint, mouse } from "@nut-tree-fork/nut-js";
+import { Button, Key, Point as NutPoint, clipboard, getActiveWindow, keyboard, mouse } from "@nut-tree-fork/nut-js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { probeMedia, resolveFfmpegPath } from "./ffmpeg.js";
 import { spawnProcess } from "./process.js";
 import { validateRecorderConfig } from "./validation.js";
 import { resolveCaptureBounds } from "./windows.js";
 import type {
-  CaptureProject, InputControlOptions, MouseButton, MovementEasing, Point, PointerSample,
-  RecordedAction, RecorderConfig, Rect, TimelineMark,
+  CaptureProject, CursorMode, InputControlOptions, KeyboardKey, KeyboardModifier, MouseButton, MovementEasing,
+  Point, PointerSample, RecordedAction, RecorderConfig, Rect, TimelineMark,
 } from "./types.js";
 
 const DEFAULT_FPS = 30;
 const DEFAULT_MAX_DURATION_SECONDS = 300;
-const POINTER_SAMPLE_INTERVAL_MS = 100;
+const POINTER_SAMPLE_INTERVAL_MS = 1000 / 60;
+const MAX_TEXT_LENGTH = 4_096;
 
 function ease(value: number, kind: MovementEasing): number {
   if (kind === "ease-in") return value * value;
@@ -36,6 +37,31 @@ function buttonValue(button: MouseButton): Button {
   return Button.LEFT;
 }
 
+const KEY_VALUES: Record<KeyboardKey, Key> = {
+  Escape: Key.Escape, Tab: Key.Tab, Enter: Key.Enter, Space: Key.Space, Backspace: Key.Backspace,
+  Delete: Key.Delete, Home: Key.Home, End: Key.End, PageUp: Key.PageUp, PageDown: Key.PageDown,
+  ArrowUp: Key.Up, ArrowDown: Key.Down, ArrowLeft: Key.Left, ArrowRight: Key.Right,
+};
+
+const MODIFIER_VALUES: Record<KeyboardModifier, Key> = {
+  Alt: Key.LeftAlt, Control: Key.LeftControl, Shift: Key.LeftShift, Meta: Key.LeftMeta,
+};
+
+function intersects(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function evenBounds(rect: Rect): Rect {
+  return { ...rect, width: Math.max(2, Math.floor(rect.width / 2) * 2), height: Math.max(2, Math.floor(rect.height / 2) * 2) };
+}
+
+function resolveCursorMode(config: RecorderConfig): CursorMode {
+  if (config.cursorMode) return config.cursorMode;
+  if (config.drawMouse === true) return "native";
+  if (config.drawMouse === false) return "hidden";
+  return "software";
+}
+
 export class ScreenRecorderSession {
   readonly config: RecorderConfig;
   private process?: ChildProcessWithoutNullStreams;
@@ -45,8 +71,10 @@ export class ScreenRecorderSession {
   private rawVideoPath = "";
   private workDirectoryToken = "";
   private bounds?: Rect;
+  private requestedBounds?: Rect;
   private dpi = 96;
   private input?: string;
+  private cursorMode: CursorMode = "software";
   private pointerTimer?: NodeJS.Timeout;
   private maxTimer?: NodeJS.Timeout;
   private sampling = false;
@@ -67,9 +95,11 @@ export class ScreenRecorderSession {
     if (this.config.abortSignal?.aborted) throw new Error("A sessão foi cancelada antes de iniciar.");
     const source = this.config.capture ?? { kind: "desktop" as const };
     const resolvedCapture = await resolveCaptureBounds(source);
-    this.bounds = resolvedCapture.rect;
+    this.requestedBounds = resolvedCapture.rect;
+    this.bounds = evenBounds(resolvedCapture.rect);
     this.dpi = resolvedCapture.dpi;
     this.input = resolvedCapture.input;
+    this.cursorMode = resolveCursorMode(this.config);
     const tempRoot = this.config.tempDirectory ? resolve(this.config.tempDirectory) : tmpdir();
     await mkdir(tempRoot, { recursive: true });
     this.workDirectory = await mkdtemp(join(tempRoot, "auto-screen-"));
@@ -79,11 +109,11 @@ export class ScreenRecorderSession {
 
     const fps = this.config.fps ?? DEFAULT_FPS;
     const ffmpeg = resolveFfmpegPath(this.config.ffmpegPath);
-    const args = ["-y", "-hide_banner", "-loglevel", "warning", "-f", "gdigrab", "-draw_mouse", this.config.drawMouse === false ? "0" : "1", "-framerate", String(fps)];
-    if (source.kind === "region") {
-      args.push("-offset_x", String(source.rect.x), "-offset_y", String(source.rect.y), "-video_size", `${source.rect.width}x${source.rect.height}`);
+    const args = ["-y", "-hide_banner", "-loglevel", "warning", "-f", "gdigrab", "-draw_mouse", this.cursorMode === "native" ? "1" : "0", "-framerate", String(fps)];
+    if (source.kind !== "desktop") {
+      args.push("-offset_x", String(this.bounds.x), "-offset_y", String(this.bounds.y), "-video_size", `${this.bounds.width}x${this.bounds.height}`);
     }
-    args.push("-i", this.input, "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p", this.rawVideoPath);
+    args.push("-i", this.input, "-vf", "crop=floor(iw/2)*2:floor(ih/2)*2", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p", this.rawVideoPath);
     this.process = spawnProcess(ffmpeg, args);
     let stderr = "";
     this.process.stderr.setEncoding("utf8");
@@ -129,7 +159,8 @@ export class ScreenRecorderSession {
   }
 
   async click(options: { button?: MouseButton; count?: 1 | 2; holdMs?: number } = {}): Promise<void> {
-    this.assertControl(await mouse.getPosition());
+    const position = await mouse.getPosition();
+    this.assertControl(position);
     const requested = this.now();
     const button = options.button ?? "left";
     const count = options.count ?? 1;
@@ -140,11 +171,12 @@ export class ScreenRecorderSession {
       finally { await mouse.releaseButton(nativeButton); }
     } else if (count === 2) await mouse.doubleClick(nativeButton);
     else await mouse.click(nativeButton);
-    this.record("click", requested, { button, count, holdMs: options.holdMs ?? 0 });
+    this.record("click", requested, { x: position.x, y: position.y, button, count, holdMs: options.holdMs ?? 0 });
   }
 
   async scroll(options: { deltaX?: number; deltaY?: number; durationMs?: number }): Promise<void> {
-    this.assertControl(await mouse.getPosition());
+    const position = await mouse.getPosition();
+    this.assertControl(position);
     if (options.deltaX === undefined && options.deltaY === undefined) throw new TypeError("Informe deltaX ou deltaY.");
     const requested = this.now();
     const durationMs = options.durationMs ?? 0;
@@ -159,7 +191,54 @@ export class ScreenRecorderSession {
       if (nextY > 0) await (y > 0 ? mouse.scrollDown(nextY) : mouse.scrollUp(nextY));
       if (durationMs > 0) await delay(durationMs / batches, undefined, { signal: this.config.abortSignal });
     }
-    this.record("scroll", requested, { deltaX: x, deltaY: y, durationMs });
+    this.record("scroll", requested, { x: position.x, y: position.y, deltaX: x, deltaY: y, durationMs });
+  }
+
+  async typeText(text: string, options: { intervalMs?: number } = {}): Promise<void> {
+    if (!text || text.length > MAX_TEXT_LENGTH) throw new RangeError(`text deve conter entre 1 e ${MAX_TEXT_LENGTH} caracteres.`);
+    const intervalMs = options.intervalMs ?? 20;
+    if (!Number.isFinite(intervalMs) || intervalMs < 0 || intervalMs > 1_000) throw new RangeError("intervalMs deve ficar entre 0 e 1000.");
+    await this.assertKeyboardControl();
+    const requested = this.now();
+    const characters = [...text];
+    let inputMethod: "keys" | "clipboard" = "keys";
+    const previousDelay = keyboard.config.autoDelayMs;
+    keyboard.config.autoDelayMs = 0;
+    try {
+      if (/[^\x20-\x7E]/u.test(text)) {
+        inputMethod = "clipboard";
+        const previousClipboard = await clipboard.getContent();
+        await clipboard.setContent(text);
+        try {
+          await keyboard.pressKey(Key.LeftControl, Key.V);
+          await keyboard.releaseKey(Key.V, Key.LeftControl);
+          await delay(Math.max(50, intervalMs), undefined, { signal: this.config.abortSignal });
+        } finally {
+          await clipboard.setContent(previousClipboard);
+        }
+      } else {
+        for (let index = 0; index < characters.length; index += 1) {
+          this.assertUsable();
+          if (index > 0 && index % 16 === 0) await this.assertKeyboardControl();
+          await keyboard.type(characters[index] as string);
+          if (intervalMs > 0 && index < characters.length - 1) await delay(intervalMs, undefined, { signal: this.config.abortSignal });
+        }
+      }
+    } finally {
+      keyboard.config.autoDelayMs = previousDelay;
+    }
+    this.record("typeText", requested, { redacted: true, characterCount: characters.length, intervalMs, inputMethod });
+  }
+
+  async pressKey(key: KeyboardKey, options: { modifiers?: KeyboardModifier[] } = {}): Promise<void> {
+    await this.assertKeyboardControl();
+    const requested = this.now();
+    const modifiers = [...new Set(options.modifiers ?? [])];
+    const keys = [...modifiers.map((modifier) => MODIFIER_VALUES[modifier]), KEY_VALUES[key]];
+    await keyboard.pressKey(...keys);
+    try { await delay(40, undefined, { signal: this.config.abortSignal }); }
+    finally { await keyboard.releaseKey(...[...keys].reverse()); }
+    this.record("pressKey", requested, { key, modifiers });
   }
 
   async wait(durationMs: number): Promise<void> {
@@ -193,6 +272,12 @@ export class ScreenRecorderSession {
     const ffmpeg = resolveFfmpegPath(this.config.ffmpegPath);
     const probe = await probeMedia(this.rawVideoPath, ffmpeg);
     if (probe.durationSeconds <= 0) throw new Error("O vídeo capturado não tem duração válida.");
+    const video = probe.streams.find((stream) => stream.codecType === "video");
+    if (!video?.width || !video.height) throw new Error("A captura não informou dimensões de vídeo válidas.");
+    if (video.width !== this.bounds.width || video.height !== this.bounds.height) {
+      this.warnings.push(`A superfície capturada foi ajustada de ${this.bounds.width}x${this.bounds.height} para ${video.width}x${video.height}.`);
+      this.bounds = { ...this.bounds, width: video.width, height: video.height };
+    }
     return {
       schemaVersion: 1,
       platform: "win32",
@@ -204,8 +289,11 @@ export class ScreenRecorderSession {
         source: this.config.capture ?? { kind: "desktop" },
         bounds: this.bounds,
         fps: this.config.fps ?? DEFAULT_FPS,
-        drawMouse: this.config.drawMouse !== false,
+        drawMouse: this.cursorMode === "native",
+        cursorMode: this.cursorMode,
         dpi: this.dpi,
+        ...(this.requestedBounds === undefined ? {} : { requestedBounds: this.requestedBounds }),
+        encodedSize: { width: video.width, height: video.height },
       },
       rawDurationSeconds: probe.durationSeconds,
       actions: [...this.actions],
@@ -246,6 +334,28 @@ export class ScreenRecorderSession {
     if (!control.enabled) throw new Error("O controle de entrada está desabilitado. Use inputControl.enabled: true conscientemente.");
     const allowed = control.allowedRegion ?? this.bounds;
     if (!allowed || !contains(allowed, point)) throw new RangeError("A ação do mouse está fora da região autorizada.");
+  }
+
+  private async assertKeyboardControl(): Promise<void> {
+    this.assertUsable();
+    const control = this.config.inputControl ?? {};
+    if (!control.enabled || !control.keyboard?.enabled) {
+      throw new Error("O controle de teclado está desabilitado. Habilite inputControl e inputControl.keyboard conscientemente.");
+    }
+    const activeWindow = await getActiveWindow();
+    const [activeTitle, activeRegion] = await Promise.all([activeWindow.title, activeWindow.region]);
+    const source = this.config.capture ?? { kind: "desktop" as const };
+    if (source.kind === "window") {
+      const expected = source.title.toLocaleLowerCase();
+      const actual = activeTitle.toLocaleLowerCase();
+      const matches = source.match === "exact" ? actual === expected : actual.includes(expected);
+      if (!matches) throw new Error(`A janela ativa não corresponde ao alvo autorizado: ${activeTitle}.`);
+    }
+    const allowed = control.allowedRegion ?? this.bounds;
+    const activeRect = { x: activeRegion.left, y: activeRegion.top, width: activeRegion.width, height: activeRegion.height };
+    if (!allowed || !intersects(allowed, activeRect)) {
+      throw new RangeError("A janela em primeiro plano está fora da região autorizada para teclado.");
+    }
   }
 
   private abort(reason: Error): void {
