@@ -49,17 +49,23 @@
   "scripts": {
     "build": "tsup && tsc --emitDeclarationOnly",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test test/core.test.mjs",
+    "test": "npm run build && node --test test/core.test.mjs test/human-recorder.test.mjs",
     "check:utf8": "node scripts/check-utf8.mjs",
-    "check": "npm run check:utf8 && npm run typecheck && npm test",
+    "app:check": "npm --prefix apps/desktop run check",
+    "check": "npm run check:utf8 && npm run typecheck && npm run app:check && npm test",
     "doctor": "npm run build && node dist/cli.js doctor",
+    "app:install": "npm run app:node && npm --prefix apps/desktop install",
+    "app": "npm run app:node && npm run build && npm --prefix apps/desktop start",
+    "desktop:install": "npm run app:install",
+    "desktop": "npm run app",
     "demo:setup": "node scripts/fetch-demo-soundfont.mjs",
     "demo": "npm run build && node scripts/run-demo.mjs",
     "test:integration": "npm run build && node scripts/run-integration.mjs",
     "test:capture": "npm run build && node scripts/run-capture-smoke.mjs",
     "pack:check": "npm pack --dry-run",
     "prepare": "npm run build",
-    "validate:skills": "node scripts/validate-skills.mjs"
+    "validate:skills": "node scripts/validate-skills.mjs",
+    "app:node": "node scripts/check-desktop-node.mjs"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "4.2.6",

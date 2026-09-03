@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <title>Selecionar área</title>
+  <link rel="stylesheet" href="./region.css">
+</head>
+<body>
+  <div class="instruction">
+    <strong>Defina a área de gravação</strong>
+    <span>Arraste o box para mover. Use as bordas para redimensionar.</span>
+  </div>
+
+  <div class="top-actions">
+    <button id="cancelButton" class="cancel-button" type="button">Cancelar</button>
+    <button id="confirmButton" class="confirm-button" type="button">Usar esta área</button>
+  </div>
+
+  <div id="selectionBox" class="selection-box" role="application" aria-label="Área selecionada">
+    <div id="dimensionBadge" class="dimension-badge">1280 × 720</div>
+    <div class="move-hint">Arraste para mover</div>
+    <span class="handle handle-nw" data-handle="nw"></span>
+    <span class="handle handle-n" data-handle="n"></span>
+    <span class="handle handle-ne" data-handle="ne"></span>
+    <span class="handle handle-e" data-handle="e"></span>
+    <span class="handle handle-se" data-handle="se"></span>
+    <span class="handle handle-s" data-handle="s"></span>
+    <span class="handle handle-sw" data-handle="sw"></span>
+    <span class="handle handle-w" data-handle="w"></span>
+  </div>
+
+  <script type="module" src="./region.js"></script>
+</body>
+</html>

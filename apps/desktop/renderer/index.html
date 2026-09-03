@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <title>Auto-Screen</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">GRAVADOR DE TELA</p>
+        <h1>Auto-Screen</h1>
+        <p class="subtitle">Escolha uma fonte estática, grave, pause e salve em MP4.</p>
+      </div>
+      <div id="environmentStatus" class="status-pill status-pending">Verificando ambiente</div>
+    </header>
+
+    <section id="errorBanner" class="error-banner" hidden>
+      <strong>Não foi possível concluir a ação.</strong>
+      <span id="errorMessage"></span>
+      <button id="dismissError" class="icon-button" type="button" aria-label="Fechar mensagem">×</button>
+    </section>
+
+    <section id="setupPanel" class="panel">
+      <div class="section-heading">
+        <div>
+          <span class="step-number">1</span>
+          <h2>O que será gravado?</h2>
+        </div>
+        <p>A posição e as dimensões ficam fixas até o fim da gravação.</p>
+      </div>
+
+      <div class="source-grid">
+        <button id="displaySource" class="source-card is-selected" type="button">
+          <span class="source-icon" aria-hidden="true">▣</span>
+          <span class="source-copy">
+            <strong>Tela inteira</strong>
+            <small>Um monitor completo</small>
+          </span>
+          <span class="source-check" aria-hidden="true">✓</span>
+        </button>
+
+        <button id="regionSource" class="source-card" type="button">
+          <span class="source-icon" aria-hidden="true">⌗</span>
+          <span class="source-copy">
+            <strong>Área personalizada</strong>
+            <small>Mova e redimensione um box</small>
+          </span>
+          <span class="source-check" aria-hidden="true">✓</span>
+        </button>
+
+        <button id="windowSource" class="source-card" type="button">
+          <span class="source-icon" aria-hidden="true">▤</span>
+          <span class="source-copy">
+            <strong>Janela</strong>
+            <small>Usa o retângulo inicial da janela</small>
+          </span>
+          <span class="source-check" aria-hidden="true">✓</span>
+        </button>
+      </div>
+
+      <div id="displayPicker" class="source-picker">
+        <div class="field-row">
+          <label for="displaySelect">Monitor</label>
+          <button id="refreshDisplays" class="text-button" type="button">Atualizar lista</button>
+        </div>
+        <div class="select-row">
+          <select id="displaySelect">
+            <option value="">Carregando monitores</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="windowPicker" class="source-picker" hidden>
+        <div class="field-row">
+          <label for="windowSelect">Janela visível</label>
+          <button id="refreshWindows" class="text-button" type="button">Atualizar lista</button>
+        </div>
+        <div class="select-row">
+          <select id="windowSelect">
+            <option value="">Selecione uma janela</option>
+          </select>
+        </div>
+        <p class="field-help">A área é recalculada ao iniciar. Depois disso, a janela deve permanecer visível e parada.</p>
+      </div>
+
+      <div class="selection-summary">
+        <span class="summary-label">Seleção atual</span>
+        <strong id="selectionTitle">Tela inteira</strong>
+        <span id="selectionDetail">Aguardando a lista de monitores</span>
+      </div>
+    </section>
+
+    <section id="optionsPanel" class="panel compact-panel">
+      <div class="section-heading">
+        <div>
+          <span class="step-number">2</span>
+          <h2>Configuração</h2>
+        </div>
+      </div>
+
+      <div class="options-grid">
+        <label class="option-field">
+          <span>Taxa de quadros</span>
+          <select id="fpsSelect">
+            <option value="60" selected>60 FPS</option>
+            <option value="30">30 FPS</option>
+          </select>
+        </label>
+
+        <label class="toggle-row">
+          <span>
+            <strong>Mostrar cursor</strong>
+            <small>Grava o cursor nativo do Windows</small>
+          </span>
+          <input id="cursorToggle" type="checkbox" checked>
+        </label>
+      </div>
+    </section>
+
+    <section id="actionPanel" class="action-panel">
+      <button id="startButton" class="primary-button" type="button" disabled>
+        <span class="record-dot" aria-hidden="true"></span>
+        Iniciar gravação
+      </button>
+      <p id="startHint">Conclua a verificação do ambiente para começar.</p>
+    </section>
+
+    <section id="resultPanel" class="panel result-panel" hidden>
+      <div class="result-icon" aria-hidden="true">✓</div>
+      <div class="result-copy">
+        <h2>Gravação concluída</h2>
+        <p id="resultDescription">O vídeo temporário está pronto para ser salvo.</p>
+        <div class="result-meta">
+          <span id="resultDuration">00:00</span>
+          <span id="resultResolution">—</span>
+          <span id="resultSegments">1 segmento</span>
+        </div>
+      </div>
+      <div class="result-actions">
+        <button id="saveButton" class="primary-button" type="button">Salvar como MP4</button>
+        <button id="discardButton" class="secondary-button danger" type="button">Descartar</button>
+      </div>
+    </section>
+
+    <section id="savingPanel" class="panel saving-panel" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <div>
+        <h2>Finalizando o MP4</h2>
+        <p>Codificando o vídeo e preparando o arquivo final.</p>
+      </div>
+    </section>
+
+    <section id="savedPanel" class="panel saved-panel" hidden>
+      <div>
+        <span class="saved-label">Arquivo salvo</span>
+        <strong id="savedPath"></strong>
+      </div>
+      <button id="openOutput" class="secondary-button" type="button">Mostrar na pasta</button>
+    </section>
+
+    <details class="diagnostics">
+      <summary>Diagnóstico do ambiente</summary>
+      <div id="diagnosticList" class="diagnostic-list"></div>
+      <button id="refreshDoctor" class="text-button" type="button">Executar novamente</button>
+    </details>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

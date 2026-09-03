@@ -1,0 +1,28 @@
+:root { font-family: "Segoe UI", system-ui, sans-serif; color: #f8fafc; background: #111827; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #111827; }
+.toolbar {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px 10px 14px;
+  border: 1px solid #293449;
+  border-radius: 12px;
+  background: #111827;
+  box-shadow: 0 10px 30px rgba(0,0,0,.28);
+}
+.drag-area { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; -webkit-app-region: drag; user-select: none; }
+.status-dot { width: 12px; height: 12px; flex: 0 0 auto; border: 2px solid rgba(255,255,255,.25); border-radius: 50%; background: #ff5265; box-shadow: 0 0 0 4px rgba(255,82,101,.12); }
+.status-dot.paused { border-radius: 3px; background: #f5b942; box-shadow: 0 0 0 4px rgba(245,185,66,.12); }
+.status-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.status-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.status-copy span { color: #aab4c7; font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 650; }
+.controls { display: flex; flex: 0 0 auto; gap: 7px; -webkit-app-region: no-drag; }
+button { height: 34px; padding: 0 12px; border: 1px solid #3a465d; border-radius: 8px; color: #e8edf6; background: #202a3d; font: 700 11px "Segoe UI", system-ui, sans-serif; cursor: pointer; }
+button:hover:not(:disabled) { border-color: #60708c; background: #2a364c; }
+button:disabled { cursor: wait; opacity: .55; }
+.stop-button { border-color: #6b3039; color: #ffdce1; background: #4d242c; }
+.stop-button:hover:not(:disabled) { border-color: #a64d5b; background: #642d37; }

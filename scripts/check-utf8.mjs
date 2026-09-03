@@ -2,7 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
 
 const root = process.cwd();
-const included = new Set([".ts", ".mts", ".cts", ".js", ".mjs", ".cjs", ".json", ".md", ".ps1", ".cmd", ".yaml", ".yml"]);
+const included = new Set([".ts", ".mts", ".cts", ".js", ".mjs", ".cjs", ".json", ".md", ".html", ".css", ".ps1", ".cmd", ".yaml", ".yml"]);
 const ignored = new Set([".git", "dist", "node_modules", "output"]);
 const mojibake = /(?:\u00C3[\u00A7\u00A3\u00A1\u00A9\u00AA\u00B3\u00B5\u00BA]|\u00C2[\u00A0-\u00FF]|\u00E2(?:\u20AC|\u2122)|\uFFFD)/u;
 const decoder = new TextDecoder("utf-8", { fatal: true });
