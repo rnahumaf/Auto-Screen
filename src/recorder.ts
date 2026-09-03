@@ -4,19 +4,19 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
-import { Button, Key, Point as NutPoint, clipboard, getActiveWindow, keyboard, mouse } from "@nut-tree-fork/nut-js";
+import { Button, Key, Point as NutPoint, getActiveWindow, keyboard, mouse } from "@nut-tree-fork/nut-js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { probeMedia, resolveFfmpegPath } from "./ffmpeg.js";
+import { probeMedia, probeVideoCadence, resolveFfmpegPath } from "./ffmpeg.js";
 import { inputToPhysicalPoint, inputToPhysicalRect, physicalToInputPoint } from "./coordinates.js";
 import { spawnProcess } from "./process.js";
 import { validateRecorderConfig } from "./validation.js";
-import { resolveCaptureBounds } from "./windows.js";
+import { resolveCaptureBounds, typeUnicodeText } from "./windows.js";
 import type {
-  CaptureProject, CursorMode, InputControlOptions, KeyboardKey, KeyboardModifier, MouseButton, MovementEasing,
-  Point, PointerSample, RecordedAction, RecorderConfig, Rect, TimelineMark,
+  CaptureBackend, CaptureProject, CursorMode, DisplayInfo, InputControlOptions, KeyboardKey, KeyboardModifier,
+  MouseButton, MovementEasing, Point, PointerSample, RecordedAction, RecorderConfig, Rect, TimelineMark, WindowInfo,
 } from "./types.js";
 
-const DEFAULT_FPS = 30;
+const DEFAULT_FPS = 60;
 const DEFAULT_MAX_DURATION_SECONDS = 300;
 const POINTER_SAMPLE_INTERVAL_MS = 1000 / 60;
 const MAX_TEXT_LENGTH = 4_096;
@@ -58,9 +58,12 @@ function evenBounds(rect: Rect): Rect {
 
 function resolveCursorMode(config: RecorderConfig): CursorMode {
   if (config.cursorMode) return config.cursorMode;
-  if (config.drawMouse === true) return "native";
-  if (config.drawMouse === false) return "hidden";
   return "software";
+}
+
+function containsRect(outer: Rect, inner: Rect): boolean {
+  return inner.x >= outer.x && inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height;
 }
 
 export class ScreenRecorderSession {
@@ -75,12 +78,19 @@ export class ScreenRecorderSession {
   private requestedBounds?: Rect;
   private dpi = 96;
   private input?: string;
+  private backend: CaptureBackend = "dda";
+  private display?: DisplayInfo;
+  private targetWindow: WindowInfo | undefined;
   private cursorMode: CursorMode = "software";
   private pointerTimer?: NodeJS.Timeout;
   private maxTimer?: NodeJS.Timeout;
   private sampling = false;
   private stopped = false;
   private abortedReason?: Error;
+  private firstFrameDelayMs = 0;
+  private duplicatedFrames = 0;
+  private droppedFrames = 0;
+  private abortListener?: () => void;
   private readonly actions: RecordedAction[] = [];
   private readonly pointerPath: PointerSample[] = [];
   private readonly marks: TimelineMark[] = [];
@@ -94,13 +104,20 @@ export class ScreenRecorderSession {
     if (this.process) throw new Error("A sessão já foi iniciada.");
     if (process.platform !== "win32") throw new Error("Auto-Screen 0.1.0 grava somente no Windows.");
     if (this.config.abortSignal?.aborted) throw new Error("A sessão foi cancelada antes de iniciar.");
-    const source = this.config.capture ?? { kind: "desktop" as const };
+    const source = this.config.capture ?? { kind: "display" as const };
     const resolvedCapture = await resolveCaptureBounds(source);
     this.requestedBounds = resolvedCapture.rect;
     this.bounds = evenBounds(resolvedCapture.rect);
     this.dpi = resolvedCapture.dpi;
     this.input = resolvedCapture.input;
+    this.display = resolvedCapture.display;
+    this.targetWindow = resolvedCapture.window;
+    this.backend = this.config.captureBackend ?? "dda";
     this.cursorMode = resolveCursorMode(this.config);
+    const allowedRegion = this.config.inputControl?.allowedRegion;
+    if (allowedRegion && !containsRect(this.bounds, allowedRegion)) {
+      throw new RangeError("allowedRegion precisa estar integralmente contida na captura.");
+    }
     const tempRoot = this.config.tempDirectory ? resolve(this.config.tempDirectory) : tmpdir();
     await mkdir(tempRoot, { recursive: true });
     this.workDirectory = await mkdtemp(join(tempRoot, "auto-screen-"));
@@ -110,33 +127,115 @@ export class ScreenRecorderSession {
 
     const fps = this.config.fps ?? DEFAULT_FPS;
     const ffmpeg = resolveFfmpegPath(this.config.ffmpegPath);
-    const args = ["-y", "-hide_banner", "-loglevel", "warning", "-f", "gdigrab", "-draw_mouse", this.cursorMode === "native" ? "1" : "0", "-framerate", String(fps)];
-    if (source.kind !== "desktop") {
-      args.push("-offset_x", String(this.bounds.x), "-offset_y", String(this.bounds.y), "-video_size", `${this.bounds.width}x${this.bounds.height}`);
+    const args = ["-y", "-hide_banner", "-loglevel", "warning", "-progress", "pipe:1", "-stats_period", "0.05"];
+    if (this.backend === "dda") {
+      const offsetX = this.bounds.x - this.display.rect.x;
+      const offsetY = this.bounds.y - this.display.rect.y;
+      const graphPath = join(this.workDirectory, "capture-filtergraph.txt");
+      const graph = [
+        `ddagrab=output_idx=${this.display.outputIndex}:draw_mouse=${this.cursorMode === "native" ? 1 : 0}:framerate=${fps}:` +
+          `video_size=${this.bounds.width}x${this.bounds.height}:offset_x=${offsetX}:offset_y=${offsetY}:dup_frames=1`,
+        "hwdownload", "format=bgra", `fps=${fps}`, "format=yuv420p[capture]",
+      ].join(",");
+      await writeFile(graphPath, `${graph}\n`, "utf8");
+      args.push(
+        "-init_hw_device", `d3d11va=auto_screen_dda:${this.display.adapterIndex}`,
+        "-filter_hw_device", "auto_screen_dda",
+        "-/filter_complex", graphPath, "-map", "[capture]",
+      );
+    } else {
+      this.warnings.push("Backend GDI solicitado explicitamente; a captura pode apresentar quadros parcialmente obsoletos.");
+      args.push(
+        "-f", "gdigrab", "-draw_mouse", this.cursorMode === "native" ? "1" : "0", "-framerate", String(fps),
+        "-offset_x", String(this.bounds.x), "-offset_y", String(this.bounds.y),
+        "-video_size", `${this.bounds.width}x${this.bounds.height}`, "-i", this.input,
+        "-vf", `crop=floor(iw/2)*2:floor(ih/2)*2,fps=${fps}`,
+      );
     }
-    args.push("-i", this.input, "-vf", "crop=floor(iw/2)*2:floor(ih/2)*2", "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p", this.rawVideoPath);
+    args.push(
+      "-an", "-fps_mode", "cfr", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12",
+      "-pix_fmt", "yuv420p", this.rawVideoPath,
+    );
+    const processStartedAt = performance.now();
     this.process = spawnProcess(ffmpeg, args);
     let stderr = "";
+    let progressBuffer = "";
+    let progress: Record<string, string> = {};
+    let ready = false;
+    let resolveReady: (() => void) | undefined;
+    let rejectReady: ((error: Error) => void) | undefined;
+    const readyPromise = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolveReady = resolvePromise;
+      rejectReady = rejectPromise;
+    });
     this.process.stderr.setEncoding("utf8");
     this.process.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    this.processExit = new Promise((resolveExit, reject) => {
-      this.process?.once("error", reject);
-      this.process?.once("close", (code) => resolveExit({ code: code ?? -1, stderr }));
+    this.process.stdout.setEncoding("utf8");
+    this.process.stdout.on("data", (chunk: string) => {
+      progressBuffer += chunk;
+      const lines = progressBuffer.split(/\r?\n/);
+      progressBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const separator = line.indexOf("=");
+        if (separator < 0) continue;
+        const key = line.slice(0, separator);
+        const value = line.slice(separator + 1);
+        progress[key] = value;
+        if (key !== "progress") continue;
+        this.duplicatedFrames = Math.max(this.duplicatedFrames, Number(progress.dup_frames ?? 0) || 0);
+        this.droppedFrames = Math.max(this.droppedFrames, Number(progress.drop_frames ?? 0) || 0);
+        if (!ready && (Number(progress.frame ?? 0) || 0) > 0) {
+          const observedAt = performance.now();
+          const outputTimeMs = Math.max(0, (Number(progress.out_time_us ?? 0) || 0) / 1_000);
+          this.startedAt = observedAt - outputTimeMs;
+          this.firstFrameDelayMs = observedAt - processStartedAt;
+          ready = true;
+          resolveReady?.();
+        }
+        progress = {};
+      }
     });
-    try { await delay(400, undefined, { signal: this.config.abortSignal }); }
+    this.processExit = new Promise((resolveExit, reject) => {
+      this.process?.once("error", (error) => {
+        rejectReady?.(error);
+        reject(error);
+      });
+      this.process?.once("close", (code) => {
+        if (!ready) rejectReady?.(new Error(`FFmpeg não iniciou a captura: ${stderr.trim()}`));
+        resolveExit({ code: code ?? -1, stderr });
+      });
+    });
+    let readinessTimer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        readyPromise,
+        new Promise<never>((_, reject) => {
+          readinessTimer = setTimeout(() => reject(new Error("FFmpeg não entregou o primeiro quadro em cinco segundos.")), 5_000);
+        }),
+      ]);
+    }
     catch (error) {
       if (this.process.exitCode === null) this.process.kill();
-      await this.processExit;
+      try { await this.processExit; } catch { /* preservar erro de prontidão */ }
+      const detail = error instanceof Error ? error.message : String(error);
+      if (this.backend === "dda" && /desktop duplication access denied/i.test(`${detail}\n${stderr}`)) {
+        throw new Error(
+          "Desktop Duplication foi recusada pelo Windows. Desbloqueie a sessão e encerre outros gravadores/compartilhamentos " +
+          "de tela antes de tentar novamente; o Auto-Screen não fará fallback implícito para GDI.",
+        );
+      }
       throw error;
+    } finally {
+      if (readinessTimer) clearTimeout(readinessTimer);
     }
-    if (this.process.exitCode !== null) {
-      const exit = await this.processExit;
-      throw new Error(`FFmpeg não iniciou a captura: ${exit.stderr.trim()}`);
-    }
-    this.startedAt = performance.now();
     this.pointerTimer = setInterval(() => { void this.samplePointer(); }, POINTER_SAMPLE_INTERVAL_MS);
-    this.maxTimer = setTimeout(() => this.abort(new Error("A sessão atingiu a duração máxima configurada.")), (this.config.maxDurationSeconds ?? DEFAULT_MAX_DURATION_SECONDS) * 1_000);
-    this.config.abortSignal?.addEventListener("abort", () => this.abort(new Error("A sessão foi cancelada.")), { once: true });
+    const elapsedMs = Math.max(0, performance.now() - this.startedAt);
+    this.maxTimer = setTimeout(
+      () => this.abort(new Error("A sessão atingiu a duração máxima configurada.")),
+      Math.max(1, (this.config.maxDurationSeconds ?? DEFAULT_MAX_DURATION_SECONDS) * 1_000 - elapsedMs),
+    );
+    this.abortListener = () => this.abort(new Error("A sessão foi cancelada."));
+    this.config.abortSignal?.addEventListener("abort", this.abortListener, { once: true });
     await this.samplePointer();
     return this;
   }
@@ -147,15 +246,19 @@ export class ScreenRecorderSession {
     const start = inputToPhysicalPoint(await mouse.getPosition(), this.dpi);
     const durationMs = options.durationMs ?? 350;
     const easing = options.easing ?? "ease-in-out";
-    const steps = Math.max(1, Math.ceil(durationMs / 16));
-    for (let index = 1; index <= steps; index += 1) {
+    const movementStartedAt = performance.now();
+    while (true) {
       this.assertUsable();
-      const progress = ease(index / steps, easing);
+      const elapsed = performance.now() - movementStartedAt;
+      const progress = ease(durationMs === 0 ? 1 : Math.min(1, elapsed / durationMs), easing);
       const x = Math.round(start.x + (point.x - start.x) * progress);
       const y = Math.round(start.y + (point.y - start.y) * progress);
       const nativePoint = physicalToInputPoint({ x, y }, this.dpi);
       await mouse.setPosition(new NutPoint(nativePoint.x, nativePoint.y));
-      if (durationMs > 0) await delay(durationMs / steps, undefined, { signal: this.config.abortSignal });
+      this.appendPointerSample({ x, y, timeSeconds: this.now() });
+      if (progress >= 1) break;
+      const remaining = durationMs - (performance.now() - movementStartedAt);
+      if (remaining > 0) await delay(Math.min(POINTER_SAMPLE_INTERVAL_MS, remaining), undefined, { signal: this.config.abortSignal });
     }
     this.record("moveMouse", requested, { ...point, durationMs, easing });
   }
@@ -186,12 +289,20 @@ export class ScreenRecorderSession {
     const y = Math.trunc(options.deltaY ?? 0);
     const total = Math.max(Math.abs(x), Math.abs(y), 1);
     const batches = durationMs > 0 ? Math.min(total, Math.max(1, Math.ceil(durationMs / 30))) : 1;
-    for (let index = 0; index < batches; index += 1) {
-      const nextX = Math.round(Math.abs(x) * (index + 1) / batches) - Math.round(Math.abs(x) * index / batches);
-      const nextY = Math.round(Math.abs(y) * (index + 1) / batches) - Math.round(Math.abs(y) * index / batches);
+    const scrollStartedAt = performance.now();
+    let completed = 0;
+    while (completed < batches) {
+      const targetBatch = durationMs === 0 ? batches : Math.min(batches, Math.max(completed + 1, Math.floor((performance.now() - scrollStartedAt) / durationMs * batches)));
+      const nextX = Math.round(Math.abs(x) * targetBatch / batches) - Math.round(Math.abs(x) * completed / batches);
+      const nextY = Math.round(Math.abs(y) * targetBatch / batches) - Math.round(Math.abs(y) * completed / batches);
       if (nextX > 0) await (x > 0 ? mouse.scrollRight(nextX) : mouse.scrollLeft(nextX));
       if (nextY > 0) await (y > 0 ? mouse.scrollDown(nextY) : mouse.scrollUp(nextY));
-      if (durationMs > 0) await delay(durationMs / batches, undefined, { signal: this.config.abortSignal });
+      completed = targetBatch;
+      if (completed < batches && durationMs > 0) {
+        const nextDeadline = scrollStartedAt + durationMs * (completed + 1) / batches;
+        const waitMs = nextDeadline - performance.now();
+        if (waitMs > 0) await delay(waitMs, undefined, { signal: this.config.abortSignal });
+      }
     }
     this.record("scroll", requested, { x: position.x, y: position.y, deltaX: x, deltaY: y, durationMs });
   }
@@ -200,36 +311,16 @@ export class ScreenRecorderSession {
     if (!text || text.length > MAX_TEXT_LENGTH) throw new RangeError(`text deve conter entre 1 e ${MAX_TEXT_LENGTH} caracteres.`);
     const intervalMs = options.intervalMs ?? 20;
     if (!Number.isFinite(intervalMs) || intervalMs < 0 || intervalMs > 1_000) throw new RangeError("intervalMs deve ficar entre 0 e 1000.");
-    await this.assertKeyboardControl();
+    const activeHandle = await this.assertKeyboardControl();
     const requested = this.now();
     const characters = [...text];
-    let inputMethod: "keys" | "clipboard" = "keys";
-    const previousDelay = keyboard.config.autoDelayMs;
-    keyboard.config.autoDelayMs = 0;
-    try {
-      if (/[^\x20-\x7E]/u.test(text)) {
-        inputMethod = "clipboard";
-        const previousClipboard = await clipboard.getContent();
-        await clipboard.setContent(text);
-        try {
-          await keyboard.pressKey(Key.LeftControl, Key.V);
-          await keyboard.releaseKey(Key.V, Key.LeftControl);
-          await delay(Math.max(50, intervalMs), undefined, { signal: this.config.abortSignal });
-        } finally {
-          await clipboard.setContent(previousClipboard);
-        }
-      } else {
-        for (let index = 0; index < characters.length; index += 1) {
-          this.assertUsable();
-          if (index > 0 && index % 16 === 0) await this.assertKeyboardControl();
-          await keyboard.type(characters[index] as string);
-          if (intervalMs > 0 && index < characters.length - 1) await delay(intervalMs, undefined, { signal: this.config.abortSignal });
-        }
-      }
-    } finally {
-      keyboard.config.autoDelayMs = previousDelay;
-    }
-    this.record("typeText", requested, { redacted: true, characterCount: characters.length, intervalMs, inputMethod });
+    await typeUnicodeText(text, activeHandle, intervalMs);
+    this.record("typeText", requested, {
+      redacted: true,
+      characterCount: characters.length,
+      intervalMs,
+      inputMethod: "windows-send-input-unicode",
+    });
   }
 
   async pressKey(key: KeyboardKey, options: { modifiers?: KeyboardModifier[] } = {}): Promise<void> {
@@ -261,18 +352,23 @@ export class ScreenRecorderSession {
   }
 
   async stop(): Promise<CaptureProject> {
-    if (!this.process || !this.processExit || !this.bounds || !this.input) throw new Error("A sessão não foi iniciada.");
+    if (!this.process || !this.processExit || !this.bounds || !this.input || !this.display) throw new Error("A sessão não foi iniciada.");
     if (this.stopped) throw new Error("A sessão já foi encerrada.");
-    this.stopped = true;
     if (this.pointerTimer) clearInterval(this.pointerTimer);
     if (this.maxTimer) clearTimeout(this.maxTimer);
     await this.samplePointer();
+    this.stopped = true;
+    if (this.abortListener) this.config.abortSignal?.removeEventListener("abort", this.abortListener);
     if (this.process.exitCode === null && !this.process.killed) this.process.stdin.write("q\n");
     const exit = await this.processExit;
     if (exit.code !== 0 && !this.abortedReason) throw new Error(`A captura falhou: ${exit.stderr.trim()}`);
     if (this.abortedReason) throw this.abortedReason;
     const ffmpeg = resolveFfmpegPath(this.config.ffmpegPath);
     const probe = await probeMedia(this.rawVideoPath, ffmpeg);
+    const requestedFps = this.config.fps ?? DEFAULT_FPS;
+    const cadence = await probeVideoCadence(this.rawVideoPath, requestedFps, ffmpeg, {
+      duplicatedFrames: this.duplicatedFrames, droppedFrames: this.droppedFrames,
+    });
     if (probe.durationSeconds <= 0) throw new Error("O vídeo capturado não tem duração válida.");
     const video = probe.streams.find((stream) => stream.codecType === "video");
     if (!video?.width || !video.height) throw new Error("A captura não informou dimensões de vídeo válidas.");
@@ -280,22 +376,45 @@ export class ScreenRecorderSession {
       this.warnings.push(`A superfície capturada foi ajustada de ${this.bounds.width}x${this.bounds.height} para ${video.width}x${video.height}.`);
       this.bounds = { ...this.bounds, width: video.width, height: video.height };
     }
+    const correctedRatio = cadence.frameCount > 0 ? (cadence.duplicatedFrames + cadence.droppedFrames) / cadence.frameCount : 0;
+    if (correctedRatio > 0.05 || cadence.maximumGapMs > 100) {
+      throw new Error(
+        `A captura não atingiu a cadência mínima: ${(correctedRatio * 100).toFixed(2)}% de quadros corrigidos; ` +
+        `maior lacuna ${cadence.maximumGapMs.toFixed(1)} ms. Intermediários preservados em ${this.workDirectory}.`,
+      );
+    }
+    if (correctedRatio > 0.01 || !cadence.constantFrameRate) {
+      this.warnings.push(
+        `Cadência abaixo do ideal: ${(correctedRatio * 100).toFixed(2)}% de quadros corrigidos; ` +
+        `maior lacuna ${cadence.maximumGapMs.toFixed(1)} ms.`,
+      );
+    }
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       platform: "win32",
       createdAt: new Date().toISOString(),
       rawVideoPath: this.rawVideoPath,
       workDirectory: this.workDirectory,
       workDirectoryToken: this.workDirectoryToken,
       capture: {
-        source: this.config.capture ?? { kind: "desktop" },
+        backend: this.backend,
+        source: this.config.capture ?? { kind: "display" },
+        display: this.display,
         bounds: this.bounds,
-        fps: this.config.fps ?? DEFAULT_FPS,
-        drawMouse: this.cursorMode === "native",
+        requestedFps,
         cursorMode: this.cursorMode,
         dpi: this.dpi,
         ...(this.requestedBounds === undefined ? {} : { requestedBounds: this.requestedBounds }),
         encodedSize: { width: video.width, height: video.height },
+        ...(this.targetWindow === undefined ? {} : {
+          window: {
+            handle: this.targetWindow.handle,
+            processId: this.targetWindow.processId,
+            initialTitle: this.targetWindow.title,
+          },
+        }),
+        timing: { firstFrameDelayMs: Number(this.firstFrameDelayMs.toFixed(3)) },
+        cadence,
       },
       rawDurationSeconds: probe.durationSeconds,
       actions: [...this.actions],
@@ -306,11 +425,11 @@ export class ScreenRecorderSession {
   }
 
   private async samplePointer(): Promise<void> {
-    if (!this.process || this.stopped && this.pointerPath.length > 0 || this.sampling || this.startedAt === 0) return;
+    if (!this.process || this.stopped || this.sampling || this.startedAt === 0) return;
     this.sampling = true;
     try {
       const point = inputToPhysicalPoint(await mouse.getPosition(), this.dpi);
-      this.pointerPath.push({ x: point.x, y: point.y, timeSeconds: this.now() });
+      this.appendPointerSample({ x: point.x, y: point.y, timeSeconds: this.now() });
     } catch (error) {
       this.warnings.push(`Não foi possível amostrar o cursor: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -321,6 +440,13 @@ export class ScreenRecorderSession {
   private record(type: RecordedAction["type"], requestedAtSeconds: number, details: Record<string, unknown>): void {
     const actualAtSeconds = this.now();
     this.actions.push({ type, requestedAtSeconds, actualAtSeconds, durationSeconds: actualAtSeconds - requestedAtSeconds, details });
+  }
+
+  private appendPointerSample(sample: PointerSample): void {
+    const previous = this.pointerPath.at(-1);
+    if (previous && sample.timeSeconds < previous.timeSeconds) return;
+    if (previous && sample.timeSeconds === previous.timeSeconds && sample.x === previous.x && sample.y === previous.y) return;
+    this.pointerPath.push(sample);
   }
 
   private now(): number { return Math.max(0, (performance.now() - this.startedAt) / 1_000); }
@@ -338,7 +464,7 @@ export class ScreenRecorderSession {
     if (!allowed || !contains(allowed, point)) throw new RangeError("A ação do mouse está fora da região autorizada.");
   }
 
-  private async assertKeyboardControl(): Promise<void> {
+  private async assertKeyboardControl(): Promise<string> {
     this.assertUsable();
     const control = this.config.inputControl ?? {};
     if (!control.enabled || !control.keyboard?.enabled) {
@@ -346,12 +472,11 @@ export class ScreenRecorderSession {
     }
     const activeWindow = await getActiveWindow();
     const [activeTitle, activeRegion] = await Promise.all([activeWindow.title, activeWindow.region]);
-    const source = this.config.capture ?? { kind: "desktop" as const };
-    if (source.kind === "window") {
-      const expected = source.title.toLocaleLowerCase();
-      const actual = activeTitle.toLocaleLowerCase();
-      const matches = source.match === "exact" ? actual === expected : actual.includes(expected);
-      if (!matches) throw new Error(`A janela ativa não corresponde ao alvo autorizado: ${activeTitle}.`);
+    const activeHandle = String((activeWindow as unknown as { windowHandle?: number }).windowHandle ?? "");
+    if (this.targetWindow) {
+      if (!activeHandle || activeHandle !== this.targetWindow.handle) {
+        throw new Error(`A janela ativa não corresponde ao HWND autorizado: ${activeTitle}.`);
+      }
     }
     const allowed = control.allowedRegion ?? this.bounds;
     const activeRect = inputToPhysicalRect(
@@ -361,12 +486,19 @@ export class ScreenRecorderSession {
     if (!allowed || !intersects(allowed, activeRect)) {
       throw new RangeError("A janela em primeiro plano está fora da região autorizada para teclado.");
     }
+    if (!activeHandle) throw new Error("O provedor nativo não informou o HWND da janela ativa.");
+    return activeHandle;
   }
 
   private abort(reason: Error): void {
     if (this.stopped || this.abortedReason) return;
     this.abortedReason = reason;
-    if (this.process?.exitCode === null) this.process.kill();
+    if (this.process?.exitCode === null) {
+      if (this.process.stdin.writable) this.process.stdin.write("q\n");
+      setTimeout(() => {
+        if (this.process?.exitCode === null) this.process.kill();
+      }, 1_500).unref();
+    }
   }
 }
 

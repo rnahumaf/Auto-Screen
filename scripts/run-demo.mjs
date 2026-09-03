@@ -23,7 +23,7 @@ try {
   const rect = window.rect;
   session = createScreenRecorder({
     capture: { kind: "window", title, match: "exact" },
-    fps: 30,
+    fps: 60,
     cursorMode: "software",
     maxDurationSeconds: 30,
     inputControl: { enabled: true, allowedRegion: rect, keyboard: { enabled: true } },
@@ -60,7 +60,7 @@ try {
     outPrefix: resolve("output/demo/auto-screen-demo"),
     width: 1280,
     height: 720,
-    fps: 30,
+    fps: 60,
     speed,
     captions: [
       { text: "O agente digita sem expor o conteúdo no manifesto", startSeconds: 0.35, endSeconds: Math.min(3.4, durationSeconds), anchor: "auto" },

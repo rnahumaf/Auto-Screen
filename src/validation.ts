@@ -1,14 +1,17 @@
 import { z } from "zod";
-import type { RecorderConfig, ScreenScript } from "./types.js";
+import type { CaptureProject, RecorderConfig, RenderOptions, ScreenScript } from "./types.js";
 
 const finite = z.number().finite();
 const nonNegative = finite.min(0);
 const positive = finite.positive();
 const rectSchema = z.object({ x: finite, y: finite, width: positive, height: positive }).strict();
 const captureSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("desktop") }).strict(),
-  z.object({ kind: z.literal("region"), rect: rectSchema }).strict(),
-  z.object({ kind: z.literal("window"), title: z.string().min(1), match: z.enum(["exact", "contains"]).optional() }).strict(),
+  z.object({ kind: z.literal("display"), displayIndex: nonNegative.int().optional() }).strict(),
+  z.object({ kind: z.literal("region"), rect: rectSchema, displayIndex: nonNegative.int().optional() }).strict(),
+  z.object({
+    kind: z.literal("window"), title: z.string().min(1), match: z.enum(["exact", "contains"]).optional(),
+    displayIndex: nonNegative.int().optional(),
+  }).strict(),
 ]);
 
 const inputControlSchema = z.object({
@@ -19,9 +22,9 @@ const inputControlSchema = z.object({
 
 const recorderSchema = z.object({
   capture: captureSchema.optional(),
+  captureBackend: z.enum(["dda", "gdi"]).optional(),
   fps: finite.int().min(1).max(120).optional(),
   cursorMode: z.enum(["software", "native", "hidden"]).optional(),
-  drawMouse: z.boolean().optional(),
   ffmpegPath: z.string().min(1).optional(),
   tempDirectory: z.string().min(1).optional(),
   maxDurationSeconds: positive.max(3_600).optional(),
@@ -62,7 +65,6 @@ const speedSchema = z.object({ startSeconds: nonNegative, endSeconds: positive, 
 const cameraTargetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("desktop") }).strict(),
   z.object({ kind: z.literal("region"), rect: rectSchema }).strict(),
-  z.object({ kind: z.literal("window"), title: z.string().min(1), match: z.enum(["exact", "contains"]).optional() }).strict(),
   z.object({ kind: z.literal("pointer"), smoothing: finite.min(0).max(1).optional() }).strict(),
 ]);
 const cameraSchema = z.object({
@@ -116,7 +118,53 @@ const renderSchema = z.object({
 }).strict();
 
 const screenScriptSchema = z.object({
-  schemaVersion: z.literal(1), recorder: scriptRecorderSchema.optional(), steps: z.array(stepSchema).max(10_000), render: renderSchema.optional(),
+  schemaVersion: z.literal(2), recorder: scriptRecorderSchema.optional(), steps: z.array(stepSchema).max(10_000), render: renderSchema.optional(),
+}).strict();
+
+const cadenceSchema = z.object({
+  frameCount: nonNegative.int(), measuredFps: nonNegative, maximumGapMs: nonNegative,
+  duplicatedFrames: nonNegative.int(), droppedFrames: nonNegative.int(), constantFrameRate: z.boolean(),
+}).strict();
+
+const displaySchema = z.object({
+  index: nonNegative.int(), deviceName: z.string().min(1), adapterIndex: nonNegative.int(), outputIndex: nonNegative.int(),
+  rect: rectSchema, dpi: positive, primary: z.boolean(),
+}).strict();
+
+const captureProjectSchema = z.object({
+  schemaVersion: z.literal(2), platform: z.literal("win32"), createdAt: z.string().min(1),
+  rawVideoPath: z.string().min(1), workDirectory: z.string().min(1), workDirectoryToken: z.string().min(1),
+  capture: z.object({
+    backend: z.enum(["dda", "gdi"]), source: captureSchema, display: displaySchema, bounds: rectSchema,
+    requestedFps: finite.int().min(1).max(120), cursorMode: z.enum(["software", "native", "hidden"]), dpi: positive,
+    requestedBounds: rectSchema.optional(), encodedSize: z.object({ width: positive.int(), height: positive.int() }).strict().optional(),
+    window: z.object({ handle: z.string().min(1), processId: nonNegative.int(), initialTitle: z.string() }).strict().optional(),
+    timing: z.object({ firstFrameDelayMs: nonNegative }).strict(), cadence: cadenceSchema,
+  }).strict(),
+  rawDurationSeconds: positive,
+  actions: z.array(z.object({
+    type: z.enum(["moveMouse", "click", "scroll", "typeText", "pressKey", "wait", "mark"]),
+    requestedAtSeconds: nonNegative, actualAtSeconds: nonNegative, durationSeconds: nonNegative,
+    details: z.record(z.string(), z.unknown()),
+  }).strict()).max(10_000),
+  pointerPath: z.array(z.object({ x: finite, y: finite, timeSeconds: nonNegative }).strict()).max(100_000),
+  marks: z.array(z.object({ id: z.string().min(1), timeSeconds: nonNegative, intensity: finite.min(0).max(1) }).strict()).max(10_000),
+  warnings: z.array(z.string()).max(10_000),
+}).strict();
+
+const programmaticAudioSourceSchema = z.discriminatedUnion("kind", [
+  fileAudioSourceSchema,
+  z.object({ kind: z.literal("bytes"), bytes: z.instanceof(Uint8Array), format: z.enum(["wav", "mp3"]) }).strict(),
+  z.object({
+    kind: z.literal("midi"), midi: z.union([z.instanceof(Uint8Array), z.string().min(1)]),
+    soundfontPath: z.string().min(1), tailSeconds: nonNegative.max(30).optional(),
+  }).strict(),
+]);
+
+const renderOptionsSchema = renderSchema.omit({ audio: true }).extend({
+  outPrefix: z.string().min(1),
+  audio: z.array(z.object({ ...audioBase, source: programmaticAudioSourceSchema }).strict()).max(64).optional(),
+  abortSignal: z.custom<AbortSignal>((value) => value instanceof AbortSignal).optional(),
 }).strict();
 
 export function validateRecorderConfig(value: unknown): RecorderConfig {
@@ -133,6 +181,19 @@ export function validateScreenScript(value: unknown): ScreenScript {
         (caption.transition?.in === "fade" || caption.transition?.out === "fade")) {
       throw new RangeError("A duração do fade não cabe no intervalo da legenda.");
     }
+  }
+  return parsed;
+}
+
+export function validateCaptureProject(value: unknown): CaptureProject {
+  return captureProjectSchema.parse(value) as CaptureProject;
+}
+
+export function validateRenderOptions(value: unknown): RenderOptions {
+  const parsed = renderOptionsSchema.parse(value) as RenderOptions;
+  for (const caption of parsed.captions ?? []) {
+    if (caption.endSeconds <= caption.startSeconds) throw new RangeError("O fim da legenda deve ocorrer depois do início.");
+    if (caption.anchor === "custom" && !caption.position) throw new TypeError("Legenda custom exige position.");
   }
   return parsed;
 }

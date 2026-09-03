@@ -2,25 +2,31 @@ import { access } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { runProcess } from "./process.js";
-import type { CaptureSource, DesktopMetrics, Rect, WindowInfo } from "./types.js";
+import type { CaptureSource, DesktopMetrics, DisplayInfo, Rect, WindowInfo } from "./types.js";
 
 function helperPath(): string {
   const resolver = createRequire(join(process.cwd(), "__auto_screen_resolver__.cjs"));
-  const moduleDirectory = dirname(resolver.resolve("auto-screen"));
+  const moduleDirectory = dirname(resolver.resolve("@rnaf/auto-screen"));
   return resolve(moduleDirectory, "..", "assets", "windows-helper.ps1");
 }
 
-async function runHelper(command: "metrics" | "windows", point?: { x: number; y: number }): Promise<unknown> {
+async function runHelper(
+  command: "metrics" | "windows" | "displays" | "type-unicode",
+  point?: { x: number; y: number },
+  extraArguments: string[] = [],
+  input?: string,
+): Promise<unknown> {
   if (process.platform !== "win32") throw new Error("Auto-Screen 0.1.0 oferece captura somente no Windows.");
   const script = helperPath();
   await access(script);
   const arguments_ = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Command", command];
   if (point) arguments_.push("-X", String(Math.round(point.x)), "-Y", String(Math.round(point.y)));
+  arguments_.push(...extraArguments);
   const candidates = [process.env.AUTO_SCREEN_POWERSHELL_PATH, "pwsh.exe", "powershell.exe"].filter((value): value is string => Boolean(value));
   let lastError: unknown;
   for (const executable of candidates) {
     try {
-      const result = await runProcess(executable, arguments_);
+      const result = await runProcess(executable, arguments_, input === undefined ? {} : { input });
       return JSON.parse(result.stdout.trim()) as unknown;
     } catch (error) {
       lastError = error;
@@ -28,6 +34,20 @@ async function runHelper(command: "metrics" | "windows", point?: { x: number; y:
     }
   }
   throw lastError ?? new Error("PowerShell não encontrado.");
+}
+
+export async function typeUnicodeText(text: string, expectedHandle: string, intervalMs: number): Promise<void> {
+  if (!text) throw new TypeError("O texto Unicode não pode ser vazio.");
+  if (!/^\d+$/.test(expectedHandle)) throw new TypeError("O HWND esperado precisa ser um inteiro não negativo.");
+  if (!Number.isInteger(intervalMs) || intervalMs < 0 || intervalMs > 1_000) {
+    throw new RangeError("intervalMs deve ficar entre 0 e 1000.");
+  }
+  await runHelper(
+    "type-unicode",
+    undefined,
+    ["-ExpectedHandle", expectedHandle, "-IntervalMs", String(intervalMs)],
+    text,
+  );
 }
 
 function parseWindow(row: unknown): WindowInfo {
@@ -43,6 +63,23 @@ function parseWindow(row: unknown): WindowInfo {
       height: Number(item.height ?? 0),
     },
     dpi: Number(item.dpi ?? 96),
+    displayIndex: Number(item.displayIndex ?? -1),
+  };
+}
+
+function parseDisplay(row: unknown): DisplayInfo {
+  const item = row as Record<string, unknown>;
+  return {
+    index: Number(item.index ?? -1),
+    deviceName: String(item.deviceName ?? ""),
+    adapterIndex: Number(item.adapterIndex ?? -1),
+    outputIndex: Number(item.outputIndex ?? -1),
+    rect: {
+      x: Number(item.x ?? 0), y: Number(item.y ?? 0),
+      width: Number(item.width ?? 0), height: Number(item.height ?? 0),
+    },
+    dpi: Number(item.dpi ?? 96),
+    primary: Boolean(item.primary),
   };
 }
 
@@ -60,9 +97,22 @@ export async function getDpiAtPoint(point: { x: number; y: number }): Promise<nu
 }
 
 export async function listWindows(): Promise<WindowInfo[]> {
-  const value = await runHelper("windows");
+  const [value, displays] = await Promise.all([runHelper("windows"), listDisplays()]);
   const rows = Array.isArray(value) ? value : value ? [value] : [];
-  return rows.map(parseWindow).filter((window) => window.rect.width > 0 && window.rect.height > 0);
+  return rows.map((row) => {
+    const window = parseWindow(row);
+    const deviceName = String((row as Record<string, unknown>).displayDeviceName ?? "");
+    window.displayIndex = displays.find((display) => display.deviceName.toLocaleLowerCase() === deviceName.toLocaleLowerCase())?.index ?? -1;
+    return window;
+  }).filter((window) => window.rect.width > 0 && window.rect.height > 0);
+}
+
+export async function listDisplays(): Promise<DisplayInfo[]> {
+  const value = await runHelper("displays");
+  const rows = Array.isArray(value) ? value : value ? [value] : [];
+  return rows.map(parseDisplay)
+    .filter((display) => display.index >= 0 && display.adapterIndex >= 0 && display.outputIndex >= 0 && display.deviceName && display.rect.width > 0 && display.rect.height > 0)
+    .sort((a, b) => a.index - b.index);
 }
 
 export async function findWindow(title: string, match: "exact" | "contains" = "contains"): Promise<WindowInfo> {
@@ -78,17 +128,54 @@ export async function findWindow(title: string, match: "exact" | "contains" = "c
   return candidates[0] as WindowInfo;
 }
 
-export async function resolveCaptureBounds(source: CaptureSource): Promise<{ rect: Rect; dpi: number; input: "desktop" }> {
+function containsRect(outer: Rect, inner: Rect): boolean {
+  return inner.x >= outer.x && inner.y >= outer.y &&
+    inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height;
+}
+
+function requestedDisplay(displays: DisplayInfo[], index: number | undefined): DisplayInfo | undefined {
+  if (index === undefined) return undefined;
+  const display = displays.find((candidate) => candidate.index === index);
+  if (!display) throw new Error(`Display ${index} não foi encontrado. Execute auto-screen displays para listar os índices disponíveis.`);
+  return display;
+}
+
+function displayContaining(displays: DisplayInfo[], rect: Rect, explicitIndex?: number): DisplayInfo {
+  const explicit = requestedDisplay(displays, explicitIndex);
+  if (explicit) {
+    if (!containsRect(explicit.rect, rect)) throw new Error(`A região solicitada não cabe integralmente no display ${explicit.index}.`);
+    return explicit;
+  }
+  const matches = displays.filter((display) => containsRect(display.rect, rect));
+  if (matches.length !== 1) {
+    throw new Error("A captura precisa pertencer integralmente a um único display DDA; regiões entre monitores não são suportadas.");
+  }
+  return matches[0] as DisplayInfo;
+}
+
+export interface ResolvedCapture {
+  rect: Rect;
+  dpi: number;
+  input: "desktop";
+  display: DisplayInfo;
+  window?: WindowInfo;
+}
+
+export async function resolveCaptureBounds(source: CaptureSource): Promise<ResolvedCapture> {
+  const displays = await listDisplays();
+  if (displays.length === 0) throw new Error("Nenhum display compatível com Desktop Duplication foi encontrado.");
   if (source.kind === "region") {
-    const center = { x: source.rect.x + source.rect.width / 2, y: source.rect.y + source.rect.height / 2 };
-    return { rect: source.rect, dpi: await getDpiAtPoint(center), input: "desktop" };
+    const display = displayContaining(displays, source.rect, source.displayIndex);
+    return { rect: source.rect, dpi: display.dpi, input: "desktop", display };
   }
   if (source.kind === "window") {
     const window = await findWindow(source.title, source.match);
-    return { rect: window.rect, dpi: window.dpi, input: "desktop" };
+    const display = displayContaining(displays, window.rect, source.displayIndex ?? window.displayIndex);
+    return { rect: window.rect, dpi: window.dpi, input: "desktop", display, window };
   }
-  const desktop = await getDesktopMetrics();
-  return { rect: desktop.rect, dpi: desktop.dpi, input: "desktop" };
+  const display = requestedDisplay(displays, source.displayIndex) ?? displays.find((candidate) => candidate.primary) ?? displays[0];
+  if (!display) throw new Error("Nenhum display foi encontrado.");
+  return { rect: display.rect, dpi: display.dpi, input: "desktop", display };
 }
 
 export function resolveFfprobePath(ffmpegPath: string): string {

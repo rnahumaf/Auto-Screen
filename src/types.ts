@@ -8,10 +8,12 @@ export interface Rect extends Point {
   height: number;
 }
 
+export type CaptureBackend = "dda" | "gdi";
+
 export type CaptureSource =
-  | { kind: "desktop" }
-  | { kind: "region"; rect: Rect }
-  | { kind: "window"; title: string; match?: "exact" | "contains" };
+  | { kind: "display"; displayIndex?: number }
+  | { kind: "region"; rect: Rect; displayIndex?: number }
+  | { kind: "window"; title: string; match?: "exact" | "contains"; displayIndex?: number };
 
 export interface InputControlOptions {
   enabled?: boolean;
@@ -25,10 +27,9 @@ export type CursorMode = "software" | "native" | "hidden";
 
 export interface RecorderConfig {
   capture?: CaptureSource;
+  captureBackend?: CaptureBackend;
   fps?: number;
   cursorMode?: CursorMode;
-  /** @deprecated Use cursorMode. */
-  drawMouse?: boolean;
   ffmpegPath?: string;
   tempDirectory?: string;
   maxDurationSeconds?: number;
@@ -65,7 +66,6 @@ export interface ResolvedSpeedSegment extends SpeedSegment {
 export type CameraTarget =
   | { kind: "desktop" }
   | { kind: "region"; rect: Rect }
-  | { kind: "window"; title: string; match?: "exact" | "contains" }
   | { kind: "pointer"; smoothing?: number };
 
 export interface CameraCue {
@@ -147,6 +147,7 @@ export interface RenderOptions {
     clickColor?: string;
   };
   keepIntermediates?: boolean;
+  abortSignal?: AbortSignal;
 }
 
 export interface RecordedAction {
@@ -168,21 +169,31 @@ export interface TimelineMark {
 }
 
 export interface CaptureProject {
-  schemaVersion: 1;
+  schemaVersion: 2;
   platform: "win32";
   createdAt: string;
   rawVideoPath: string;
   workDirectory: string;
   workDirectoryToken: string;
   capture: {
+    backend: CaptureBackend;
     source: CaptureSource;
+    display: DisplayInfo;
     bounds: Rect;
-    fps: number;
-    drawMouse: boolean;
+    requestedFps: number;
     cursorMode: CursorMode;
     dpi: number;
     requestedBounds?: Rect;
     encodedSize?: { width: number; height: number };
+    window?: {
+      handle: string;
+      processId: number;
+      initialTitle: string;
+    };
+    timing: {
+      firstFrameDelayMs: number;
+    };
+    cadence: VideoCadence;
   };
   rawDurationSeconds: number;
   actions: RecordedAction[];
@@ -200,7 +211,7 @@ export interface AudioManifestEntry {
 }
 
 export interface ScreenManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   platform: "win32";
   createdAt: string;
   capture: CaptureProject["capture"] & { rawDurationSeconds: number };
@@ -209,6 +220,7 @@ export interface ScreenManifest {
     width: number;
     height: number;
     fps: number;
+    cadence: VideoCadence;
     durationSeconds: number;
     videoCodec: "h264";
     audioCodec: "aac";
@@ -241,7 +253,7 @@ export interface ScriptRenderOptions extends Omit<RenderOptions, "outPrefix" | "
 }
 
 export interface ScreenScript {
-  schemaVersion: 1;
+  schemaVersion: 2;
   recorder?: Omit<RecorderConfig, "abortSignal">;
   steps: ScriptStep[];
   render?: ScriptRenderOptions;
@@ -260,6 +272,26 @@ export interface WindowInfo {
   handle: string;
   rect: Rect;
   dpi: number;
+  displayIndex: number;
+}
+
+export interface DisplayInfo {
+  index: number;
+  deviceName: string;
+  adapterIndex: number;
+  outputIndex: number;
+  rect: Rect;
+  dpi: number;
+  primary: boolean;
+}
+
+export interface VideoCadence {
+  frameCount: number;
+  measuredFps: number;
+  maximumGapMs: number;
+  duplicatedFrames: number;
+  droppedFrames: number;
+  constantFrameRate: boolean;
 }
 
 export interface DesktopMetrics {

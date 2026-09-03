@@ -4,11 +4,13 @@
 
 - A biblioteca exige `inputControl.enabled: true`.
 - Mouse exige `allowInputControl`; teclado exige ainda `inputControl.keyboard.enabled` e `allowKeyboardControl`. O CLI usa flags separadas.
-- Pontos de movimento e a posição corrente antes de clique/rolagem precisam estar dentro de `allowedRegion` ou da captura.
+- Pontos de movimento e a posição corrente antes de clique/rolagem precisam estar dentro de `allowedRegion` ou da captura. Uma `allowedRegion` explícita precisa estar integralmente contida na captura.
 - `AbortSignal`, `Ctrl+C` no CLI e `maxDurationSeconds` encerram o FFmpeg. Botões mantidos são liberados em `finally`.
 - Roteiros JSON não têm ações de shell ou abertura de processos. `typeText` é limitado a 4.096 caracteres e `pressKey` aceita somente teclas enumeradas.
-- A janela ativa é validada sem iniciar processos externos. Conteúdo digitado é redigido no manifesto.
-- Unicode usa o clipboard temporariamente e restaura o texto anterior mesmo em falha; não execute alterações concorrentes do clipboard.
+- A janela ativa é validada sem iniciar processos externos e precisa preservar o HWND/processo resolvidos no começo da sessão. Conteúdo digitado é redigido no manifesto.
+- DDA indisponível, captura atravessando displays ou topologia ambígua causam falha explícita; nunca habilitam GDI implicitamente.
+- Renderizações usam diretórios temporários exclusivos, aceitam `AbortSignal` e só publicam nomes finais depois de validar streams e cadência.
+- Texto Unicode usa `SendInput(KEYEVENTF_UNICODE)`, chega ao helper somente por stdin e exige que o HWND autorizado permaneça em primeiro plano a cada caractere; o clipboard não é lido nem alterado.
 - A limpeza recursiva exige um diretório `auto-screen-*`, vídeo bruto interno e token correspondente ao marcador criado pela sessão; caminhos arbitrários de manifestos não são removidos.
 
 ## Dependências externas

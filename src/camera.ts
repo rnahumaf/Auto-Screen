@@ -1,5 +1,4 @@
 import { sourceToOutputTime } from "./timeline.js";
-import { findWindow } from "./windows.js";
 import type { CameraCue, CaptureProject, Point, Rect, ResolvedSpeedSegment } from "./types.js";
 
 export interface CameraFrame extends Point {
@@ -58,10 +57,6 @@ async function cueFrame(cue: CameraCue, project: CaptureProject): Promise<Camera
   if (cue.target.kind === "region") {
     target = center(cue.target.rect, capture);
     inferredZoom = fitZoom(cue.target.rect, capture);
-  } else if (cue.target.kind === "window") {
-    const window = await findWindow(cue.target.title, cue.target.match);
-    target = center(window.rect, capture);
-    inferredZoom = fitZoom(window.rect, capture);
   }
   return {
     ...target,
@@ -81,6 +76,63 @@ function deadZoneTarget(raw: Point, previous: Point, viewportWidth: number, view
   if (raw.y < previous.y - deadY) y = raw.y + deadY;
   else if (raw.y > previous.y + deadY) y = raw.y - deadY;
   return { x, y };
+}
+
+function simplifyCameraFrames(points: CameraFrame[], initialTolerance = 0.75, maximumPoints = 1_500): CameraFrame[] {
+  if (points.length <= 2) return points;
+  const simplify = (tolerance: number): CameraFrame[] => {
+    const keep = new Set<number>([0, points.length - 1]);
+    const stack: Array<[number, number]> = [[0, points.length - 1]];
+    while (stack.length > 0) {
+      const [startIndex, endIndex] = stack.pop() as [number, number];
+      const start = points[startIndex] as CameraFrame;
+      const end = points[endIndex] as CameraFrame;
+      const duration = end.atSeconds - start.atSeconds;
+      let maximumError = 0;
+      let maximumIndex = -1;
+      for (let index = startIndex + 1; index < endIndex; index += 1) {
+        const point = points[index] as CameraFrame;
+        const progress = duration <= 0 ? 0 : (point.atSeconds - start.atSeconds) / duration;
+        const expectedX = start.x + (end.x - start.x) * progress;
+        const expectedY = start.y + (end.y - start.y) * progress;
+        const expectedZoom = start.zoom + (end.zoom - start.zoom) * progress;
+        const error = Math.hypot(point.x - expectedX, point.y - expectedY, (point.zoom - expectedZoom) * 100);
+        if (error > maximumError) {
+          maximumError = error;
+          maximumIndex = index;
+        }
+      }
+      if (maximumIndex >= 0 && maximumError > tolerance) {
+        keep.add(maximumIndex);
+        stack.push([startIndex, maximumIndex], [maximumIndex, endIndex]);
+      }
+    }
+    return [...keep].sort((a, b) => a - b).map((index) => points[index] as CameraFrame);
+  };
+  let tolerance = initialTolerance;
+  let simplified = simplify(tolerance);
+  while (simplified.length > maximumPoints) {
+    tolerance *= 1.5;
+    simplified = simplify(tolerance);
+  }
+  return simplified;
+}
+
+function pointerAtTime(
+  samples: Array<{ atSeconds: number; x: number; y: number }>,
+  atSeconds: number,
+  startIndex: number,
+): { point: Point; index: number } {
+  let index = startIndex;
+  while (index + 1 < samples.length && (samples[index + 1]?.atSeconds ?? Infinity) <= atSeconds) index += 1;
+  const current = samples[index] as { atSeconds: number; x: number; y: number };
+  const next = samples[index + 1];
+  if (!next || next.atSeconds <= current.atSeconds) return { point: { x: current.x, y: current.y }, index };
+  const progress = clamp((atSeconds - current.atSeconds) / (next.atSeconds - current.atSeconds), 0, 1);
+  return {
+    point: { x: current.x + (next.x - current.x) * progress, y: current.y + (next.y - current.y) * progress },
+    index,
+  };
 }
 
 export function automaticCameraCues(project: CaptureProject, speedMap: ResolvedSpeedSegment[]): CameraCue[] {
@@ -152,6 +204,13 @@ export async function buildCameraPlan(
   const duration = speedMap.at(-1)?.outputEndSeconds ?? 0;
   if (ordered.some((cue) => cue.atSeconds < 0 || cue.atSeconds > duration)) throw new RangeError("Cue de câmera fora da timeline final.");
   const frames: CameraFrame[] = [initial];
+  const pointerSamples = project.pointerPath
+    .map((sample) => ({
+      atSeconds: sourceToOutputTime(sample.timeSeconds, speedMap),
+      x: sample.x - project.capture.bounds.x,
+      y: sample.y - project.capture.bounds.y,
+    }))
+    .filter((sample, index, samples) => index === 0 || sample.atSeconds > (samples[index - 1]?.atSeconds ?? -Infinity));
 
   for (let index = 0; index < ordered.length; index += 1) {
     const cue = ordered[index] as CameraCue;
@@ -163,27 +222,31 @@ export async function buildCameraPlan(
     const smoothing = cue.target.smoothing ?? 0.28;
     const zoom = clamp(cue.zoom ?? 1.35, 1, 4);
     let previous: Point = { x: frames.at(-1)?.x ?? initial.x, y: frames.at(-1)?.y ?? initial.y };
-    let lastTime = -Infinity;
-    for (const sample of project.pointerPath) {
-      const outputTime = sourceToOutputTime(sample.timeSeconds, speedMap);
-      if (outputTime < cue.atSeconds || outputTime >= end || outputTime - lastTime < 0.08) continue;
-      const raw = { x: sample.x - project.capture.bounds.x, y: sample.y - project.capture.bounds.y };
+    if (pointerSamples.length === 0 || end <= cue.atSeconds) continue;
+    const frameInterval = 1 / fps;
+    const frameSmoothing = 1 - Math.pow(1 - smoothing, 1 / Math.max(1, 0.08 * fps));
+    const sampledFrames: CameraFrame[] = [];
+    let pointerIndex = 0;
+    for (let outputTime = cue.atSeconds; outputTime < end; outputTime += frameInterval) {
+      const interpolated = pointerAtTime(pointerSamples, outputTime, pointerIndex);
+      pointerIndex = interpolated.index;
+      const raw = interpolated.point;
       const target = deadZoneTarget(raw, previous, project.capture.bounds.width / zoom, project.capture.bounds.height / zoom);
       const smoothed = {
-        x: previous.x + (target.x - previous.x) * smoothing,
-        y: previous.y + (target.y - previous.y) * smoothing,
+        x: previous.x + (target.x - previous.x) * frameSmoothing,
+        y: previous.y + (target.y - previous.y) * frameSmoothing,
       };
-      if (Math.hypot(smoothed.x - previous.x, smoothed.y - previous.y) >= 1 || lastTime === -Infinity) {
-        frames.push({
-          ...smoothed,
-          atSeconds: outputTime,
-          zoom,
-          transitionSeconds: lastTime === -Infinity ? (cue.transition === "instant" ? 0 : (cue.transitionSeconds ?? 0.45)) : 0.12,
-        });
-      }
+      sampledFrames.push({
+        ...smoothed,
+        atSeconds: Number(outputTime.toFixed(9)),
+        zoom,
+        transitionSeconds: sampledFrames.length === 0
+          ? (cue.transition === "instant" ? 0 : (cue.transitionSeconds ?? 0.45))
+          : Math.min(0.12, frameInterval),
+      });
       previous = smoothed;
-      lastTime = outputTime;
     }
+    frames.push(...simplifyCameraFrames(sampledFrames, Math.max(0.5, 30 / fps)));
   }
 
   frames.sort((a, b) => a.atSeconds - b.atSeconds);

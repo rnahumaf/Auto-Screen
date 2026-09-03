@@ -39,31 +39,57 @@ function parseColor(value: string): { red: number; green: number; blue: number; 
   };
 }
 
+function simplifyTimedPoints(points: TimedPoint[], initialTolerance = 0.75, maximumPoints = 1_500): TimedPoint[] {
+  if (points.length <= 2) return points;
+  const simplify = (tolerance: number): TimedPoint[] => {
+    const keep = new Set<number>([0, points.length - 1]);
+    const stack: Array<[number, number]> = [[0, points.length - 1]];
+    while (stack.length > 0) {
+      const [startIndex, endIndex] = stack.pop() as [number, number];
+      const start = points[startIndex] as TimedPoint;
+      const end = points[endIndex] as TimedPoint;
+      const duration = end.timeSeconds - start.timeSeconds;
+      let maximumError = 0;
+      let maximumIndex = -1;
+      for (let index = startIndex + 1; index < endIndex; index += 1) {
+        const point = points[index] as TimedPoint;
+        const progress = duration <= 0 ? 0 : (point.timeSeconds - start.timeSeconds) / duration;
+        const expectedX = start.x + (end.x - start.x) * progress;
+        const expectedY = start.y + (end.y - start.y) * progress;
+        const error = Math.hypot(point.x - expectedX, point.y - expectedY);
+        if (error > maximumError) {
+          maximumError = error;
+          maximumIndex = index;
+        }
+      }
+      if (maximumIndex >= 0 && maximumError > tolerance) {
+        keep.add(maximumIndex);
+        stack.push([startIndex, maximumIndex], [maximumIndex, endIndex]);
+      }
+    }
+    return [...keep].sort((a, b) => a - b).map((index) => points[index] as TimedPoint);
+  };
+  let tolerance = initialTolerance;
+  let simplified = simplify(tolerance);
+  while (simplified.length > maximumPoints) {
+    tolerance *= 1.5;
+    simplified = simplify(tolerance);
+  }
+  return simplified;
+}
+
 function outputPointerPath(
-  project: CaptureProject, speedMap: ResolvedSpeedSegment[], frames: CameraFrame[], width: number, height: number,
+  project: CaptureProject, speedMap: ResolvedSpeedSegment[], frames: CameraFrame[], width: number, height: number, fps: number,
 ): TimedPoint[] {
   const points: TimedPoint[] = [];
-  let lastTime = -Infinity;
   for (const sample of project.pointerPath) {
     const timeSeconds = sourceToOutputTime(sample.timeSeconds, speedMap);
-    if (timeSeconds - lastTime < 0.1) continue;
     const point = projectPointToOutput(sample, timeSeconds, frames, project.capture.bounds, width, height);
     const previous = points.at(-1);
-    if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) >= 1.5) {
-      points.push({ timeSeconds, ...point });
-      lastTime = timeSeconds;
-    }
+    if (previous && timeSeconds <= previous.timeSeconds) continue;
+    points.push({ timeSeconds, ...point });
   }
-  const finalSample = project.pointerPath.at(-1);
-  if (finalSample) {
-    const timeSeconds = sourceToOutputTime(finalSample.timeSeconds, speedMap);
-    const point = projectPointToOutput(finalSample, timeSeconds, frames, project.capture.bounds, width, height);
-    const previous = points.at(-1);
-    if (!previous || timeSeconds > previous.timeSeconds && Math.hypot(point.x - previous.x, point.y - previous.y) >= 1.5) {
-      points.push({ timeSeconds, ...point });
-    }
-  }
-  return points;
+  return simplifyTimedPoints(points, Math.max(0.5, 30 / fps));
 }
 
 export function buildCursorFilters(
@@ -79,7 +105,7 @@ export function buildCursorFilters(
   outputLabel = "cursorout",
 ): string[] {
   if (project.capture.cursorMode !== "software") return [`[${inputLabel}]null[${outputLabel}]`];
-  const points = outputPointerPath(project, speedMap, frames, width, height);
+  const points = outputPointerPath(project, speedMap, frames, width, height, fps);
   if (points.length === 0) return [`[${inputLabel}]null[${outputLabel}]`];
   const size = options?.size ?? Math.max(24, Math.round(height * 0.036));
   const x = piecewise(points, "x");

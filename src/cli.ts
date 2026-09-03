@@ -4,13 +4,14 @@ import { resolve } from "node:path";
 import { runDoctor } from "./doctor.js";
 import { renderScreenProject } from "./render.js";
 import { loadScreenScript, runScreenScript } from "./script.js";
-import { listWindows } from "./windows.js";
+import { listDisplays, listWindows } from "./windows.js";
 import type { CaptureProject, RenderOptions } from "./types.js";
 
 const HELP = `Auto-Screen 0.1.0
 
 Uso:
-  auto-screen doctor [--ffmpeg <caminho>]
+  auto-screen doctor [--ffmpeg <caminho>] [--capture-smoke]
+  auto-screen displays
   auto-screen windows
   auto-screen run --config <roteiro.json> --out <prefixo> [--allow-input-control] [--allow-keyboard-control]
   auto-screen render --project <projeto.json> --out <prefixo>
@@ -36,9 +37,16 @@ async function main(): Promise<void> {
   }
   if (command === "doctor") {
     const ffmpegPath = valueAfter(args, "--ffmpeg");
-    const result = await runDoctor(ffmpegPath === undefined ? {} : { ffmpegPath });
+    const result = await runDoctor({
+      ...(ffmpegPath === undefined ? {} : { ffmpegPath }),
+      captureSmoke: args.includes("--capture-smoke"),
+    });
     for (const check of result.checks) console.log(`${check.ok ? "OK" : "ERRO"}  ${check.name}: ${check.detail}`);
     if (!result.ok) process.exitCode = 1;
+    return;
+  }
+  if (command === "displays") {
+    console.log(JSON.stringify(await listDisplays(), null, 2));
     return;
   }
   if (command === "windows") {

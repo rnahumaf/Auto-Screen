@@ -4,7 +4,7 @@ Auto-Screen existe para um harness de código produzir vídeos de uso de aplicat
 
 ## Estágio atual
 
-A versão `0.1.0` é Windows-first e experimental. Ela executa mouse e teclado autorizados, captura janelas em pixels físicos e compõe MP4 com direção automática, cursor recomposto, velocidade, legendas e faixas externas.
+A versão `0.1.0` é Windows-first e experimental. Ela executa mouse e teclado autorizados, captura um único display ou recortes físicos por Desktop Duplication a 60 fps e compõe MP4 CFR com direção automática, cursor recomposto, velocidade, legendas e faixas externas.
 
 A captura e a composição são separadas de propósito. Uma interação cara ou frágil pode ser gravada uma vez; legendas, enquadramento e música podem ser ajustados antes que o vídeo bruto seja descartado.
 
@@ -13,6 +13,8 @@ A captura e a composição são separadas de propósito. Uma interação cara ou
 - Segurança explícita vale mais que conveniência: roteiros não recebem controle do mouse apenas por declararem ações.
 - Mouse e teclado têm autorizações independentes; texto digitado não entra no manifesto.
 - A timeline final governa câmera, texto e música. Retiming modifica somente a captura visual.
+- Captura confiável vale mais que fallback conveniente: DDA é o padrão, GDI é degradado e somente explícito, e uma topologia ambígua falha antes da gravação.
+- Projetos e manifestos usam somente o schema v2 e registram origem, display e diagnóstico de cadência para auditoria.
 - Auto-MIDI se integra por dados, não por acoplamento: Auto-Screen aceita os bytes MIDI retornados por `generateMusic()` e um SoundFont fornecido pelo usuário.
 - FFmpeg e SoundFonts não são empacotados. O usuário controla versão, licença e caminho desses recursos.
 

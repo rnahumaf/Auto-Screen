@@ -2,11 +2,11 @@
 
 Auto-Screen é uma biblioteca TypeScript experimental para um harness de código gravar interações reais no Windows e transformá-las em vídeos de demonstração. O agente pode mover e clicar o mouse, rolar uma interface e registrar marcas; depois, o mesmo projeto recebe câmera virtual, mudanças de velocidade, legendas e música.
 
-A versão em desenvolvimento é `auto-screen@0.1.0`. Ela está disponível pelo GitHub, mas ainda não foi publicada no registro npm.
+A versão atual é `@rnaf/auto-screen@0.1.0`.
 
 ## O que já funciona
 
-- Captura do desktop virtual, de uma região física ou de uma janela visível, com recorte físico compatível com DPI.
+- Captura de um display, de uma região física ou de uma janela visível com Desktop Duplication, recorte compatível com DPI e 60 fps CFR por padrão.
 - API imperativa e roteiro JSON usando o mesmo motor.
 - Movimento com easing, clique simples/duplo, rolagem e teclado controlado com texto redigido no manifesto.
 - Controle de entrada desabilitado por padrão, limitado a uma região e cancelável.
@@ -14,19 +14,20 @@ A versão em desenvolvimento é `auto-screen@0.1.0`. Ela está disponível pelo 
 - Segmentos entre `0.25x` e `8x`, aplicados somente à captura visual.
 - Legendas posicionáveis com fonte, tamanho, cor, fundo e transições instantâneas ou fade.
 - Mixagem de WAV/MP3 e renderização de MIDI com SoundFont.
-- MP4 H.264/AAC e manifesto JSON com ações, marcas e mapeamento temporal.
+- MP4 H.264/AAC publicado atomicamente e manifesto v2 com backend, display, cadência, ações, marcas e mapeamento temporal.
 - Builds ESM/CommonJS, tipos TypeScript e CLI para Windows.
 
 ## Requisitos e instalação
 
 - Windows 10 ou 11.
 - Node.js 20 ou mais recente.
-- FFmpeg e FFprobe no `PATH`, com `gdigrab`, `libx264`, AAC, `zoompan`, `ass`, `setpts` e `amix`.
+- FFmpeg e FFprobe no `PATH`, com `ddagrab`, D3D11, `hwdownload`, `fps`, `libx264`, AAC, `zoompan`, `ass`, `setpts` e `amix`. `gdigrab` é necessário apenas para o backend degradado explícito.
+- Em máquinas com várias GPUs, `listDisplays()` expõe `adapterIndex` e `outputIndex`; o índice público do display continua contíguo e não é inferido de nomes como `DISPLAY5`.
 
-Durante o desenvolvimento, instale diretamente do GitHub:
+Instale pelo registro npm:
 
 ```powershell
-npm install github:rnahumaf/Auto-Screen
+npm install @rnaf/auto-screen
 ```
 
 Para contribuir:
@@ -43,11 +44,12 @@ Defina `AUTO_SCREEN_FFMPEG_PATH` ou passe `ffmpegPath` quando o executável não
 ## Sessão imperativa
 
 ```ts
-import { createScreenRecorder, renderScreenProject } from "auto-screen";
+import { createScreenRecorder, renderScreenProject } from "@rnaf/auto-screen";
 
 const recorder = createScreenRecorder({
-  capture: { kind: "window", title: "Meu aplicativo", match: "contains" },
-  fps: 30,
+  capture: { kind: "window", title: "Meu aplicativo", match: "contains", displayIndex: 0 },
+  captureBackend: "dda",
+  fps: 60,
   cursorMode: "software",
   inputControl: {
     enabled: true,
@@ -83,11 +85,11 @@ const result = await renderScreenProject(project, {
 });
 ```
 
-Quando `camera` é omitida, o renderizador cria uma direção suave a partir dos cliques e rolagens. Use `camera: []` para manter o quadro fixo. `cursorMode: "software"` é o padrão; `native` e `hidden` ficam disponíveis para diagnóstico. `drawMouse` continua aceito como alias depreciado.
+Quando `camera` é omitida, o renderizador cria uma direção suave a partir dos cliques e rolagens. Use `camera: []` para manter o quadro fixo. `cursorMode: "software"` é o padrão; `native` e `hidden` ficam disponíveis para diagnóstico. `cursorMode` é o único contrato público de cursor.
 
-Texto ASCII é digitado com o intervalo configurado. Texto Unicode usa temporariamente o clipboard e restaura seu conteúdo em `finally`, evitando perdas em caracteres como `ã` e `ç`. O manifesto nunca contém o texto: registra somente quantidade de caracteres, duração e método de entrada.
+Texto ASCII e Unicode é digitado por `SendInput(KEYEVENTF_UNICODE)` com o intervalo configurado, sem alterar o clipboard. O helper recebe o texto somente por stdin e valida o HWND em primeiro plano a cada caractere. O manifesto nunca contém o texto: registra somente quantidade de caracteres, duração e método de entrada.
 
-As coordenadas do mouse são pixels físicos do desktop virtual. Em configurações com múltiplos monitores, `x` ou `y` podem ser negativos. `allowedRegion` usa o mesmo sistema de coordenadas.
+As coordenadas do mouse são pixels físicos do desktop virtual. Em configurações com múltiplos monitores, `x` ou `y` podem ser negativos. Cada captura precisa estar integralmente em um único display; regiões cruzadas ou ambíguas falham antes de iniciar o FFmpeg. `allowedRegion` usa o mesmo sistema e precisa estar contida na captura.
 
 ## Auto-MIDI e outras faixas
 
@@ -95,7 +97,7 @@ Auto-Screen aceita áudio pronto ou MIDI. A biblioteca não distribui SoundFont:
 
 ```ts
 import { generateMusic } from "auto-midi";
-import { midiAudioSource, renderScreenProject } from "auto-screen";
+import { midiAudioSource, renderScreenProject } from "@rnaf/auto-screen";
 
 const music = generateMusic({
   durationSeconds: project.rawDurationSeconds,
@@ -130,6 +132,7 @@ O arquivo [examples/basic-script.json](examples/basic-script.json) grava alguns 
 
 ```powershell
 auto-screen doctor
+auto-screen displays
 auto-screen windows
 auto-screen run --config examples/basic-script.json --out output/basic
 ```
@@ -150,6 +153,7 @@ As duas flags são independentes. Um roteiro com `typeText` ou `pressKey` també
 npm run typecheck
 npm test
 npm run doctor
+npm run test:capture # teste passivo DDA/60 em uma sessão Windows interativa
 npm run validate:skills
 npm run pack:check
 
@@ -168,11 +172,12 @@ No Windows, `auto-screen.cmd` reúne essas ações em um menu.
 ## Segurança e limitações
 
 - A API não captura microfone nem grava o áudio do sistema nesta versão.
-- Antes de digitar, a janela ativa é conferida pelo provedor nativo e precisa coincidir com o alvo autorizado.
-- Texto Unicode usa o clipboard de forma transitória e restaura o texto anterior; evite alterar o clipboard concorrentemente durante automação.
+- Antes de digitar, a janela ativa é conferida pelo provedor nativo e seu HWND precisa coincidir com o alvo estável autorizado no início.
+- Texto Unicode usa a entrada nativa e não lê nem altera o clipboard.
 - `Ctrl+C`/`AbortSignal`, região permitida e limite de 300 segundos reduzem o risco, mas um harness continua responsável por revisar o alvo antes de habilitar cliques.
-- `gdigrab` não captura a área segura do Windows, conteúdo DRM ou janelas minimizadas; janelas protegidas também podem aparecer vazias.
-- A janela precisa permanecer visível e com título estável. Ela é capturada como região física do desktop, não pela superfície `title=` do GDI.
+- Desktop Duplication não captura conteúdo DRM, superfícies protegidas ou janelas minimizadas; HDR não é suportado neste alvo SDR inicial.
+- A janela precisa permanecer visível e integralmente no mesmo display. Ela é capturada como recorte físico da superfície composta, nunca por `gdigrab title=`.
+- `captureBackend: "gdi"` existe somente para compatibilidade deliberada e sempre avisa sobre risco de flicker; não há fallback implícito quando DDA está indisponível.
 - O artefato intermediário é removido após uma renderização bem-sucedida, salvo quando `keepIntermediates: true` é usado.
 - A árvore de `@nut-tree-fork/nut-js` inclui Jimp para recursos de imagem que Auto-Screen não chama. O advisory moderado atual de `file-type` afeta parsing de ASF malformado nessa rota não utilizada; consulte [docs/SECURITY.md](docs/SECURITY.md).
 

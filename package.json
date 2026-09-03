@@ -1,5 +1,5 @@
 {
-  "name": "auto-screen",
+  "name": "@rnaf/auto-screen",
   "version": "0.1.0",
   "description": "Gravação e composição de tela sob controle agêntico para Windows.",
   "type": "module",
@@ -56,6 +56,7 @@
     "demo:setup": "node scripts/fetch-demo-soundfont.mjs",
     "demo": "npm run build && node scripts/run-demo.mjs",
     "test:integration": "npm run build && node scripts/run-integration.mjs",
+    "test:capture": "npm run build && node scripts/run-capture-smoke.mjs",
     "pack:check": "npm pack --dry-run",
     "prepare": "npm run build",
     "validate:skills": "node scripts/validate-skills.mjs"

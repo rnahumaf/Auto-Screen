@@ -1,7 +1,9 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "recorder": {
-    "capture": { "kind": "desktop" },
+    "capture": { "kind": "display" },
+    "captureBackend": "dda",
+    "fps": 60,
     "fps": 30,
     "cursorMode": "software",
     "maxDurationSeconds": 30,
