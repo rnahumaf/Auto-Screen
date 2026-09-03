@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { runProcess } from "./process.js";
@@ -8,6 +9,118 @@ function helperPath(): string {
   const resolver = createRequire(join(process.cwd(), "__auto_screen_resolver__.cjs"));
   const moduleDirectory = dirname(resolver.resolve("@rnaf/auto-screen"));
   return resolve(moduleDirectory, "..", "assets", "windows-helper.ps1");
+}
+
+export interface PointerButtonState {
+  x: number;
+  y: number;
+  mask: number;
+  observedAtMs: number;
+}
+
+export interface PointerButtonMonitor {
+  stop(): Promise<void>;
+}
+
+async function spawnPointerButtonMonitor(
+  executable: string,
+  script: string,
+  onState: (state: PointerButtonState) => void,
+  onError: (error: Error) => void,
+): Promise<PointerButtonMonitor> {
+  const child = spawn(executable, [
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+    "-File", script, "-Command", "pointer-events",
+  ], { windowsHide: true, shell: false, stdio: "pipe" });
+  child.stdin.end();
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  let buffer = "";
+  let stderr = "";
+  let stopped = false;
+  let ready = false;
+  let clockOffsetMs: number | undefined;
+  let resolveReady: ((monitor: PointerButtonMonitor) => void) | undefined;
+  let rejectReady: ((error: Error) => void) | undefined;
+  let resolveClosed: (() => void) | undefined;
+  const closed = new Promise<void>((resolvePromise) => { resolveClosed = resolvePromise; });
+  const monitor: PointerButtonMonitor = {
+    async stop() {
+      stopped = true;
+      if (child.exitCode === null) child.kill();
+      await closed;
+    },
+  };
+  const readyPromise = new Promise<PointerButtonMonitor>((resolvePromise, rejectPromise) => {
+    resolveReady = resolvePromise;
+    rejectReady = rejectPromise;
+  });
+  const fail = (error: Error): void => {
+    if (!ready) rejectReady?.(error);
+    else if (!stopped) onError(error);
+  };
+  child.stdout.on("data", (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const [rawX, rawY, rawMask, rawTimestamp, rawFrequency, ...extra] = line.split("\t");
+      const x = Number(rawX);
+      const y = Number(rawY);
+      const mask = Number(rawMask);
+      const timestamp = Number(rawTimestamp);
+      const frequency = Number(rawFrequency);
+      if (
+        extra.length > 0 || !Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(mask) || mask < 0 || mask > 7 ||
+        !Number.isFinite(timestamp) || !Number.isFinite(frequency) || frequency <= 0
+      ) continue;
+      const helperTimeMs = timestamp * 1_000 / frequency;
+      clockOffsetMs ??= performance.now() - helperTimeMs;
+      onState({ x, y, mask, observedAtMs: helperTimeMs + clockOffsetMs });
+      if (!ready) {
+        ready = true;
+        resolveReady?.(monitor);
+      }
+    }
+  });
+  child.stderr.on("data", (chunk: string) => { stderr = `${stderr}${chunk}`.slice(-16_384); });
+  child.once("error", (error) => fail(error));
+  child.once("close", (code) => {
+    resolveClosed?.();
+    if (!stopped) fail(new Error(`O monitor de cliques terminou com código ${code ?? -1}: ${stderr.trim()}`));
+  });
+  const timer = setTimeout(() => {
+    if (ready) return;
+    stopped = true;
+    if (child.exitCode === null) child.kill();
+    rejectReady?.(new Error(`O monitor de cliques não iniciou em cinco segundos: ${stderr.trim()}`));
+  }, 5_000);
+  try {
+    return await readyPromise;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function startPointerButtonMonitor(
+  onState: (state: PointerButtonState) => void,
+  onError: (error: Error) => void,
+): Promise<PointerButtonMonitor> {
+  if (process.platform !== "win32") throw new Error("O monitor de cliques está disponível somente no Windows.");
+  const script = helperPath();
+  await access(script);
+  const candidates = [process.env.AUTO_SCREEN_POWERSHELL_PATH, "pwsh.exe", "powershell.exe"]
+    .filter((value): value is string => Boolean(value));
+  let lastError: unknown;
+  for (const executable of candidates) {
+    try {
+      return await spawnPointerButtonMonitor(executable, script, onState, onError);
+    } catch (error) {
+      lastError = error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") break;
+    }
+  }
+  throw lastError ?? new Error("PowerShell não encontrado.");
 }
 
 async function runHelper(

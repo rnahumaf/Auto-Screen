@@ -10,7 +10,8 @@ import { probeMedia, probeVideoCadence, resolveFfmpegPath } from "./ffmpeg.js";
 import { inputToPhysicalPoint, inputToPhysicalRect, physicalToInputPoint } from "./coordinates.js";
 import { spawnProcess } from "./process.js";
 import { validateRecorderConfig } from "./validation.js";
-import { resolveCaptureBounds, typeUnicodeText } from "./windows.js";
+import { resolveCaptureBounds, startPointerButtonMonitor, typeUnicodeText } from "./windows.js";
+import type { PointerButtonMonitor, PointerButtonState } from "./windows.js";
 import type {
   CaptureBackend, CaptureProject, CursorMode, DisplayInfo, InputControlOptions, KeyboardKey, KeyboardModifier,
   MouseButton, MovementEasing, Point, PointerSample, RecordedAction, RecorderConfig, Rect, TimelineMark, WindowInfo,
@@ -20,6 +21,11 @@ const DEFAULT_FPS = 60;
 const DEFAULT_MAX_DURATION_SECONDS = 300;
 const POINTER_SAMPLE_INTERVAL_MS = 1000 / 60;
 const MAX_TEXT_LENGTH = 4_096;
+const PHYSICAL_BUTTONS = [
+  { bit: 1, button: "left" },
+  { bit: 2, button: "right" },
+  { bit: 4, button: "middle" },
+] as const;
 
 function ease(value: number, kind: MovementEasing): number {
   if (kind === "ease-in") return value * value;
@@ -83,6 +89,10 @@ export class ScreenRecorderSession {
   private targetWindow: WindowInfo | undefined;
   private cursorMode: CursorMode = "software";
   private pointerTimer?: NodeJS.Timeout;
+  private pointerButtonMonitor?: PointerButtonMonitor;
+  private pointerButtonMask?: number;
+  private lastPointerButtonState?: PointerButtonState;
+  private readonly physicalButtonStarts = new Map<MouseButton, PointerSample>();
   private maxTimer?: NodeJS.Timeout;
   private sampling = false;
   private stopped = false;
@@ -156,6 +166,16 @@ export class ScreenRecorderSession {
       "-an", "-fps_mode", "cfr", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12",
       "-pix_fmt", "yuv420p", this.rawVideoPath,
     );
+    if (this.config.observePointerButtons) {
+      try {
+        this.pointerButtonMonitor = await startPointerButtonMonitor(
+          (state) => this.observePointerButtons(state),
+          (error) => this.warnings.push(`O monitor de cliques foi encerrado: ${error.message}`),
+        );
+      } catch (error) {
+        this.warnings.push(`Não foi possível monitorar cliques físicos: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     const processStartedAt = performance.now();
     this.process = spawnProcess(ffmpeg, args);
     let stderr = "";
@@ -184,13 +204,15 @@ export class ScreenRecorderSession {
         if (key !== "progress") continue;
         this.duplicatedFrames = Math.max(this.duplicatedFrames, Number(progress.dup_frames ?? 0) || 0);
         this.droppedFrames = Math.max(this.droppedFrames, Number(progress.drop_frames ?? 0) || 0);
-        if (!ready && (Number(progress.frame ?? 0) || 0) > 0) {
+        if ((Number(progress.frame ?? 0) || 0) > 0) {
           const observedAt = performance.now();
           const outputTimeMs = Math.max(0, (Number(progress.out_time_us ?? 0) || 0) / 1_000);
-          this.startedAt = observedAt - outputTimeMs;
-          this.firstFrameDelayMs = observedAt - processStartedAt;
-          ready = true;
-          resolveReady?.();
+          this.refineTimelineEpoch(Math.max(processStartedAt, observedAt - outputTimeMs));
+          if (!ready) {
+            this.firstFrameDelayMs = observedAt - processStartedAt;
+            ready = true;
+            resolveReady?.();
+          }
         }
         progress = {};
       }
@@ -217,6 +239,7 @@ export class ScreenRecorderSession {
     catch (error) {
       if (this.process.exitCode === null) this.process.kill();
       try { await this.processExit; } catch { /* preservar erro de prontidão */ }
+      if (this.pointerButtonMonitor) await this.pointerButtonMonitor.stop();
       const detail = error instanceof Error ? error.message : String(error);
       if (this.backend === "dda" && /desktop duplication access denied/i.test(`${detail}\n${stderr}`)) {
         throw new Error(
@@ -228,7 +251,11 @@ export class ScreenRecorderSession {
     } finally {
       if (readinessTimer) clearTimeout(readinessTimer);
     }
-    this.pointerTimer = setInterval(() => { void this.samplePointer(); }, POINTER_SAMPLE_INTERVAL_MS);
+    if (!this.config.observePointerButtons) {
+      this.pointerTimer = setInterval(() => { void this.samplePointer(); }, POINTER_SAMPLE_INTERVAL_MS);
+    } else if (this.lastPointerButtonState) {
+      this.appendPointerSample({ x: this.lastPointerButtonState.x, y: this.lastPointerButtonState.y, timeSeconds: 0 });
+    }
     const elapsedMs = Math.max(0, performance.now() - this.startedAt);
     this.maxTimer = setTimeout(
       () => this.abort(new Error("A sessão atingiu a duração máxima configurada.")),
@@ -236,7 +263,7 @@ export class ScreenRecorderSession {
     );
     this.abortListener = () => this.abort(new Error("A sessão foi cancelada."));
     this.config.abortSignal?.addEventListener("abort", this.abortListener, { once: true });
-    await this.samplePointer();
+    if (!this.config.observePointerButtons) await this.samplePointer();
     return this;
   }
 
@@ -356,7 +383,8 @@ export class ScreenRecorderSession {
     if (this.stopped) throw new Error("A sessão já foi encerrada.");
     if (this.pointerTimer) clearInterval(this.pointerTimer);
     if (this.maxTimer) clearTimeout(this.maxTimer);
-    await this.samplePointer();
+    if (this.pointerButtonMonitor) await this.pointerButtonMonitor.stop();
+    if (!this.config.observePointerButtons) await this.samplePointer();
     this.stopped = true;
     if (this.abortListener) this.config.abortSignal?.removeEventListener("abort", this.abortListener);
     if (this.process.exitCode === null && !this.process.killed) this.process.stdin.write("q\n");
@@ -437,6 +465,46 @@ export class ScreenRecorderSession {
     }
   }
 
+  private observePointerButtons(state: PointerButtonState): void {
+    this.lastPointerButtonState = state;
+    const previousMask = this.pointerButtonMask;
+    this.pointerButtonMask = state.mask;
+    if (!this.process || this.stopped || this.startedAt === 0) return;
+    const timeSeconds = Math.max(0, (state.observedAtMs - this.startedAt) / 1_000);
+    const sample = { x: state.x, y: state.y, timeSeconds };
+    this.appendPointerSample(sample);
+    if (previousMask === undefined) return;
+    for (const { bit, button } of PHYSICAL_BUTTONS) {
+      const wasPressed = (previousMask & bit) !== 0;
+      const isPressed = (state.mask & bit) !== 0;
+      if (!wasPressed && isPressed) {
+        this.physicalButtonStarts.set(button, sample);
+        continue;
+      }
+      if (!wasPressed || isPressed) continue;
+      const start = this.physicalButtonStarts.get(button);
+      this.physicalButtonStarts.delete(button);
+      if (!start) continue;
+      const durationSeconds = Math.max(0, timeSeconds - start.timeSeconds);
+      this.actions.push({
+        type: "click",
+        requestedAtSeconds: start.timeSeconds,
+        actualAtSeconds: timeSeconds,
+        durationSeconds,
+        details: {
+          x: start.x,
+          y: start.y,
+          releaseX: state.x,
+          releaseY: state.y,
+          button,
+          count: 1,
+          holdMs: Math.round(durationSeconds * 1_000),
+          inputMethod: "physical-observer",
+        },
+      });
+    }
+  }
+
   private record(type: RecordedAction["type"], requestedAtSeconds: number, details: Record<string, unknown>): void {
     const actualAtSeconds = this.now();
     this.actions.push({ type, requestedAtSeconds, actualAtSeconds, durationSeconds: actualAtSeconds - requestedAtSeconds, details });
@@ -447,6 +515,22 @@ export class ScreenRecorderSession {
     if (previous && sample.timeSeconds < previous.timeSeconds) return;
     if (previous && sample.timeSeconds === previous.timeSeconds && sample.x === previous.x && sample.y === previous.y) return;
     this.pointerPath.push(sample);
+  }
+
+  private refineTimelineEpoch(candidateMs: number): void {
+    if (this.startedAt === 0) {
+      this.startedAt = candidateMs;
+      return;
+    }
+    if (candidateMs >= this.startedAt) return;
+    const correctionSeconds = (this.startedAt - candidateMs) / 1_000;
+    for (const sample of this.pointerPath) sample.timeSeconds += correctionSeconds;
+    for (const action of this.actions) {
+      action.requestedAtSeconds += correctionSeconds;
+      action.actualAtSeconds += correctionSeconds;
+    }
+    for (const mark of this.marks) mark.timeSeconds += correctionSeconds;
+    this.startedAt = candidateMs;
   }
 
   private now(): number { return Math.max(0, (performance.now() - this.startedAt) / 1_000); }
@@ -493,6 +577,7 @@ export class ScreenRecorderSession {
   private abort(reason: Error): void {
     if (this.stopped || this.abortedReason) return;
     this.abortedReason = reason;
+    if (this.pointerButtonMonitor) void this.pointerButtonMonitor.stop();
     if (this.process?.exitCode === null) {
       if (this.process.stdin.writable) this.process.stdin.write("q\n");
       setTimeout(() => {

@@ -1,4 +1,4 @@
-import { extname } from "node:path";
+import { extname, join } from "node:path";
 import {
   cleanupScreenProject,
   listDisplays,
@@ -17,6 +17,8 @@ class RecorderWorker {
     this.session = undefined;
     this.project = undefined;
     this.segmentCount = 0;
+    this.previewPath = undefined;
+    this.previewing = false;
     this.rendering = false;
     this.semanticSource = undefined;
     this.windowMetadata = undefined;
@@ -27,13 +29,16 @@ class RecorderWorker {
     return {
       phase: this.rendering
         ? "rendering"
-        : this.session
-          ? this.session.state
-          : project
-            ? "captured"
-            : "idle",
+        : this.previewing
+          ? "previewing"
+          : this.session
+            ? this.session.state
+            : project
+              ? "captured"
+              : "idle",
       elapsedSeconds: this.session?.elapsedSeconds ?? project?.rawDurationSeconds ?? 0,
       segmentCount: this.session?.segmentCount ?? this.segmentCount,
+      previewPath: this.previewPath ?? null,
       project: project ? {
         durationSeconds: project.rawDurationSeconds,
         width: project.capture.encodedSize?.width ?? project.capture.bounds.width,
@@ -49,14 +54,21 @@ class RecorderWorker {
     const options = payload && typeof payload === "object" ? payload : {};
     if (!options.capture) throw new TypeError("A fonte de captura não foi informada.");
 
+    const cursorMode = ["software", "native", "hidden"].includes(options.cursorMode)
+      ? options.cursorMode
+      : options.showCursor === false
+        ? "hidden"
+        : "native";
     this.semanticSource = options.semanticSource;
     this.windowMetadata = options.windowMetadata;
     this.segmentCount = 0;
+    this.previewPath = undefined;
     this.session = new HumanRecorderSession({
       capture: options.capture,
       captureBackend: "dda",
       fps: options.fps === 30 ? 30 : 60,
-      cursorMode: options.showCursor === false ? "hidden" : "native",
+      cursorMode,
+      observePointerButtons: cursorMode === "software",
       maxDurationSeconds: 3_600,
     });
     try {
@@ -101,26 +113,57 @@ class RecorderWorker {
     }
   }
 
+  renderOptions(project, outPrefix, keepIntermediates) {
+    return {
+      outPrefix,
+      width: project.capture.encodedSize?.width ?? project.capture.bounds.width,
+      height: project.capture.encodedSize?.height ?? project.capture.bounds.height,
+      fps: project.capture.requestedFps,
+      camera: [],
+      cursor: {
+        clickIndicator: false,
+        smoothing: project.capture.cursorMode === "software" ? 0.72 : 0,
+      },
+      keepIntermediates,
+    };
+  }
+
+  async preview() {
+    if (!this.project) throw new Error("Não há gravação pronta para visualizar.");
+    if (this.rendering || this.previewing) throw new Error("A gravação já está sendo processada.");
+    if (this.previewPath) return this.status();
+    const project = this.project;
+    this.previewing = true;
+    try {
+      const rendered = await renderScreenProject(
+        project,
+        this.renderOptions(project, join(project.workDirectory, "preview", "auto-screen-preview"), true),
+      );
+      this.previewPath = rendered.videoPath;
+      this.previewing = false;
+      return this.status();
+    } catch (error) {
+      this.previewing = false;
+      throw error;
+    }
+  }
+
   async save(payload) {
     if (!this.project) throw new Error("Não há gravação pronta para salvar.");
-    if (this.rendering) throw new Error("A gravação já está sendo salva.");
+    if (this.rendering || this.previewing) throw new Error("A gravação já está sendo processada.");
     const requested = String(payload?.outputFile ?? "");
     if (!requested) throw new TypeError("O caminho de saída não foi informado.");
     const outputFile = extname(requested).toLocaleLowerCase() === ".mp4" ? requested : `${requested}.mp4`;
     const project = this.project;
     this.rendering = true;
     try {
-      const rendered = await renderScreenProject(project, {
-        outPrefix: outputFile.slice(0, -4),
-        width: project.capture.encodedSize?.width ?? project.capture.bounds.width,
-        height: project.capture.encodedSize?.height ?? project.capture.bounds.height,
-        fps: project.capture.requestedFps,
-        camera: [],
-        cursor: { clickIndicator: false },
-        keepIntermediates: false,
-      });
+      const rendered = await renderScreenProject(
+        project,
+        this.renderOptions(project, outputFile.slice(0, -4), false),
+      );
       this.project = undefined;
       this.segmentCount = 0;
+      this.previewPath = undefined;
       this.rendering = false;
       return { status: this.status(), videoPath: rendered.videoPath, manifestPath: rendered.manifestPath };
     } catch (error) {
@@ -133,6 +176,7 @@ class RecorderWorker {
     if (this.project) await cleanupScreenProject(this.project);
     this.project = undefined;
     this.segmentCount = 0;
+    this.previewPath = undefined;
     return this.status();
   }
 
@@ -155,6 +199,8 @@ class RecorderWorker {
     }
     this.project = undefined;
     this.segmentCount = 0;
+    this.previewPath = undefined;
+    this.previewing = false;
     this.semanticSource = undefined;
     this.windowMetadata = undefined;
     return this.status();
@@ -169,6 +215,7 @@ class RecorderWorker {
       case "start": return await this.start(payload);
       case "pause-resume": return await this.pauseOrResume();
       case "stop": return await this.stop();
+      case "preview": return await this.preview();
       case "save": return await this.save(payload);
       case "discard": return await this.discard();
       case "cleanup": return await this.cleanup();

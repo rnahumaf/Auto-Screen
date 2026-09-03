@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' file:; object-src 'none'; base-uri 'none'">
   <title>Auto-Screen</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
@@ -13,7 +13,7 @@
       <div>
         <p class="eyebrow">GRAVADOR DE TELA</p>
         <h1>Auto-Screen</h1>
-        <p class="subtitle">Escolha uma fonte estática, grave, pause e salve em MP4.</p>
+        <p class="subtitle">Escolha uma fonte estática, grave, pause, visualize e salve em MP4.</p>
       </div>
       <div id="environmentStatus" class="status-pill status-pending">Verificando ambiente</div>
     </header>
@@ -111,12 +111,13 @@
           </select>
         </label>
 
-        <label class="toggle-row">
-          <span>
-            <strong>Mostrar cursor</strong>
-            <small>Grava o cursor nativo do Windows</small>
-          </span>
-          <input id="cursorToggle" type="checkbox" checked>
+        <label class="option-field">
+          <span>Cursor</span>
+          <select id="cursorModeSelect">
+            <option value="software" selected>Suavizado (estilo Codex)</option>
+            <option value="native">Original do Windows</option>
+            <option value="hidden">Oculto</option>
+          </select>
         </label>
       </div>
     </section>
@@ -129,7 +130,20 @@
       <p id="startHint">Conclua a verificação do ambiente para começar.</p>
     </section>
 
+    <section id="previewingPanel" class="panel saving-panel" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <div>
+        <h2>Preparando a prévia</h2>
+        <p>Aplicando o cursor escolhido e codificando uma visualização local.</p>
+      </div>
+    </section>
+
     <section id="resultPanel" class="panel result-panel" hidden>
+      <div id="previewFrame" class="preview-frame">
+        <video id="previewVideo" controls preload="metadata" playsinline>
+          Seu sistema não conseguiu exibir a prévia deste vídeo.
+        </video>
+      </div>
       <div class="result-icon" aria-hidden="true">✓</div>
       <div class="result-copy">
         <h2>Gravação concluída</h2>

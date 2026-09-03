@@ -85,7 +85,7 @@ const result = await renderScreenProject(project, {
 });
 ```
 
-Quando `camera` é omitida, o renderizador cria uma direção suave a partir dos cliques e rolagens. Use `camera: []` para manter o quadro fixo. `cursorMode: "software"` é o padrão; `native` e `hidden` ficam disponíveis para diagnóstico. `cursorMode` é o único contrato público de cursor.
+Quando `camera` é omitida, o renderizador cria uma direção suave a partir dos cliques e rolagens. Use `camera: []` para manter o quadro fixo. `cursorMode: "software"` é o padrão; `native` e `hidden` ficam disponíveis para diagnóstico. No render, `cursor.smoothing` aceita valores de `0` a `1`; `0` preserva a trajetória original e valores maiores aplicam uma filtragem temporal mais suave. No modo humano, posição e botões compartilham o mesmo relógio Win32; cliques mantêm o hotspot na coordenada física exata, e arrastes preservam todas as amostras entre pressionar e soltar.
 
 Texto ASCII e Unicode é digitado por `SendInput(KEYEVENTF_UNICODE)` com o intervalo configurado, sem alterar o clipboard. O helper recebe o texto somente por stdin e valida o HWND em primeiro plano a cada caractere. O manifesto nunca contém o texto: registra somente quantidade de caracteres, duração e método de entrada.
 

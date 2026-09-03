@@ -25,6 +25,7 @@ const recorderSchema = z.object({
   captureBackend: z.enum(["dda", "gdi"]).optional(),
   fps: finite.int().min(1).max(120).optional(),
   cursorMode: z.enum(["software", "native", "hidden"]).optional(),
+  observePointerButtons: z.boolean().optional(),
   ffmpegPath: z.string().min(1).optional(),
   tempDirectory: z.string().min(1).optional(),
   maxDurationSeconds: positive.max(3_600).optional(),
@@ -113,6 +114,7 @@ const renderSchema = z.object({
     size: finite.int().min(12).max(128).optional(),
     clickIndicator: z.boolean().optional(),
     clickColor: z.string().regex(/^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/).optional(),
+    smoothing: finite.min(0).max(1).optional(),
   }).strict().optional(),
   keepIntermediates: z.boolean().optional(),
 }).strict();

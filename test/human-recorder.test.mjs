@@ -47,8 +47,10 @@ function fakeProject(id, durationSeconds) {
 
 test("controla iniciar, pausar, continuar e parar sem contar o intervalo pausado", async () => {
   let sequence = 0;
+  const recorderConfigs = [];
   const stoppedProjects = [fakeProject("one", 1.25), fakeProject("two", 2.5)];
-  const recorderFactory = () => {
+  const recorderFactory = (config) => {
+    recorderConfigs.push(config);
     const project = stoppedProjects[sequence++];
     return {
       async start() { return this; },
@@ -57,7 +59,7 @@ test("controla iniciar, pausar, continuar e parar sem contar o intervalo pausado
   };
   let consolidatedCount = 0;
   const session = new HumanRecorderSession(
-    { capture: { kind: "display", displayIndex: 0 }, fps: 60 },
+    { capture: { kind: "display", displayIndex: 0 }, fps: 60, cursorMode: "software" },
     {
       createRecorder: recorderFactory,
       consolidateProjects: async (projects) => {
@@ -80,6 +82,7 @@ test("controla iniciar, pausar, continuar e parar sem contar o intervalo pausado
   assert.equal(session.state, "stopped");
   assert.equal(session.segmentCount, 2);
   assert.equal(consolidatedCount, 2);
+  assert.deepEqual(recorderConfigs.map(({ cursorMode }) => cursorMode), ["software", "software"]);
   assert.equal(project.rawDurationSeconds, 3.75);
   assert.equal(session.elapsedSeconds, 3.75);
 });

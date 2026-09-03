@@ -18,10 +18,13 @@ const elements = {
   selectionTitle: document.querySelector("#selectionTitle"),
   selectionDetail: document.querySelector("#selectionDetail"),
   fpsSelect: document.querySelector("#fpsSelect"),
-  cursorToggle: document.querySelector("#cursorToggle"),
+  cursorModeSelect: document.querySelector("#cursorModeSelect"),
   startButton: document.querySelector("#startButton"),
   startHint: document.querySelector("#startHint"),
+  previewingPanel: document.querySelector("#previewingPanel"),
   resultPanel: document.querySelector("#resultPanel"),
+  previewFrame: document.querySelector("#previewFrame"),
+  previewVideo: document.querySelector("#previewVideo"),
   resultDescription: document.querySelector("#resultDescription"),
   resultDuration: document.querySelector("#resultDuration"),
   resultResolution: document.querySelector("#resultResolution"),
@@ -124,6 +127,7 @@ function renderState(state) {
 
   const phase = state.phase;
   const hasProject = phase === "captured";
+  const isPreviewing = phase === "previewing";
   const isSaving = phase === "rendering";
   const canConfigure = ["idle", "saved"].includes(phase);
   const environmentReady = state.doctor?.ok === true;
@@ -132,6 +136,7 @@ function renderState(state) {
   elements.setupPanel.hidden = !canConfigure;
   elements.optionsPanel.hidden = !canConfigure;
   elements.actionPanel.hidden = !canConfigure;
+  elements.previewingPanel.hidden = !isPreviewing;
   elements.resultPanel.hidden = !hasProject;
   elements.savingPanel.hidden = !isSaving;
   elements.savedPanel.hidden = !state.lastSavedPath || hasProject || isSaving;
@@ -150,7 +155,7 @@ function renderState(state) {
   elements.windowSelect.disabled = busy || !canConfigure;
   elements.refreshWindows.disabled = busy || !canConfigure;
   elements.fpsSelect.disabled = busy || !canConfigure;
-  elements.cursorToggle.disabled = busy || !canConfigure;
+  elements.cursorModeSelect.disabled = busy || !canConfigure;
   elements.saveButton.disabled = busy || !hasProject;
   elements.discardButton.disabled = busy || !hasProject;
 
@@ -174,6 +179,16 @@ function renderState(state) {
     elements.resultDescription.textContent = count > 1
       ? "Os períodos pausados foram removidos e os segmentos foram consolidados."
       : "O vídeo temporário está pronto para ser salvo.";
+  }
+
+  const previewUrl = state.previewUrl ?? "";
+  elements.previewFrame.hidden = !previewUrl;
+  if (elements.previewVideo.dataset.source !== previewUrl) {
+    elements.previewVideo.pause();
+    elements.previewVideo.dataset.source = previewUrl;
+    if (previewUrl) elements.previewVideo.src = previewUrl;
+    else elements.previewVideo.removeAttribute("src");
+    elements.previewVideo.load();
   }
 
   if (state.lastSavedPath) elements.savedPath.textContent = state.lastSavedPath;
@@ -337,7 +352,7 @@ elements.startButton.addEventListener("click", async () => {
   try {
     const state = await unwrap(window.autoScreen.startRecording({
       fps: Number(elements.fpsSelect.value),
-      showCursor: elements.cursorToggle.checked,
+      cursorMode: elements.cursorModeSelect.value,
     }));
     renderState(state);
   } catch (error) {

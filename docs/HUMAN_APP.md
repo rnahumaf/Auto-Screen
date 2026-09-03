@@ -75,9 +75,21 @@ Durante a captura, a janela principal fica escondida e uma barra compacta oferec
 
 A barra usa `setContentProtection(true)` e fica sempre no topo. Ao parar, ela é escondida antes que o último segmento seja finalizado.
 
+## Cursor
+
+A interface oferece três modos antes de iniciar a gravação:
+
+- **Suavizado (estilo Codex):** captura a tela sem queimar o cursor nativo e recompõe uma seta vetorial simétrica, translúcida e arredondada, com gradiente ciano–rosa e glow leve. Posição, pressionamento e soltura vêm do mesmo stream Win32 com timestamp de alta resolução; o filtro temporal reduz tremores, mas mantém cliques e toda a trajetória de arrastes como âncoras exatas.
+- **Original do Windows:** grava o cursor nativo diretamente na superfície capturada.
+- **Oculto:** não inclui cursor no vídeo final.
+
+O modo suavizado continua usando coordenadas físicas do desktop e respeita a mesma câmera fixa da gravação humana. A pausa remove o intervalo correspondente também da trajetória do ponteiro, pois as amostras dos segmentos são deslocadas para a timeline consolidada.
+
 ## Salvamento
 
-Depois de parar, o projeto temporário permanece disponível para **Salvar como MP4** ou **Descartar**.
+Depois de parar, o aplicativo produz uma prévia MP4 dentro do diretório temporário e a exibe com controles de reprodução. Essa prévia já contém o enquadramento e o cursor escolhidos, mas não substitui o arquivo final: o projeto permanece disponível para **Salvar como MP4** ou **Descartar**.
+
+Se a prévia falhar, a captura original continua preservada e o erro é exibido sem descartar o projeto. Ao salvar ou descartar, a prévia temporária é removida junto com os demais intermediários.
 
 O salvamento chama `renderScreenProject()` com:
 
@@ -87,11 +99,14 @@ O salvamento chama `renderScreenProject()` com:
   height: project.capture.encodedSize.height,
   fps: project.capture.requestedFps,
   camera: [],
-  cursor: { clickIndicator: false }
+  cursor: {
+    clickIndicator: false,
+    smoothing: project.capture.cursorMode === "software" ? 0.72 : 0
+  }
 }
 ```
 
-Isso preserva o enquadramento estático e o cursor nativo escolhido pelo usuário. O MP4 e o manifesto JSON são publicados juntos pelo pipeline v2 existente.
+Isso preserva o enquadramento estático e aplica a apresentação de cursor escolhida pelo usuário. O MP4 e o manifesto JSON são publicados juntos pelo pipeline v2 existente.
 
 ## Segurança da interface
 
@@ -102,4 +117,5 @@ Isso preserva o enquadramento estático e o cursor nativo escolhido pelo usuári
 - O preload expõe apenas operações específicas por IPC.
 - O renderer não recebe acesso genérico ao filesystem, shell ou processos.
 - O modo humano nunca habilita `inputControl`; mouse e teclado são operados diretamente pela pessoa.
+- No cursor suavizado, um observador Win32 passivo registra posição e mudanças dos botões esquerdo, direito e central em pixels físicos. Ele não envia entrada e não depende das permissões de controle agêntico.
 - O diálogo nativo define o caminho de saída.

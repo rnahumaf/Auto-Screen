@@ -129,12 +129,21 @@ test("aceita legenda automática, região negativa e teclado limitado", () => {
       inputControl: { enabled: true, keyboard: { enabled: true } },
     },
     steps: [{ type: "typeText", text: "Teste", intervalMs: 25 }, { type: "pressKey", key: "Enter" }],
-    render: { captions: [{ text: "Automática", startSeconds: 0, endSeconds: 1, anchor: "auto" }] },
+    render: {
+      captions: [{ text: "Automática", startSeconds: 0, endSeconds: 1, anchor: "auto" }],
+      cursor: { smoothing: 0.72 },
+    },
   });
   assert.equal(script.recorder.capture.rect.x, -640);
+  assert.equal(script.render.cursor.smoothing, 0.72);
   assert.throws(() => validateScreenScript({
     schemaVersion: 2,
     steps: [{ type: "typeText", text: "x".repeat(4_097) }],
+  }));
+  assert.throws(() => validateScreenScript({
+    schemaVersion: 2,
+    steps: [],
+    render: { cursor: { smoothing: 1.01 } },
   }));
 });
 
@@ -215,7 +224,7 @@ test("compõe vídeo H.264/AAC com câmera, legenda, velocidade e áudio", { tim
   }
 });
 
-test("renderiza um único cursor por software sem borda preta", { timeout: 60_000 }, async () => {
+test("renderiza trajetória longa de um único cursor por software sem exceder o parser", { timeout: 60_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "auto-screen-cursor-test-"));
   const projectDir = join(root, "project");
   await mkdir(projectDir);
@@ -232,26 +241,47 @@ test("renderiza um único cursor por software sem borda preta", { timeout: 60_00
     workDirectoryToken,
     capture: syntheticCapture({ x: 0, y: 0, width: 320, height: 180 }, 30),
     rawDurationSeconds: 2,
-    actions: [],
-    pointerPath: [{ x: 160, y: 90, timeSeconds: 0 }, { x: 160, y: 90, timeSeconds: 2 }],
+    actions: [{
+      type: "click", requestedAtSeconds: 1, actualAtSeconds: 1.5, durationSeconds: 0.5,
+      details: { x: 160, y: 90, releaseX: 250, releaseY: 140, button: "left", inputMethod: "physical-observer" },
+    }],
+    pointerPath: Array.from({ length: 481 }, (_, index) => ({
+      x: 160 + Math.sin(index * 0.61) * 105,
+      y: 90 + Math.cos(index * 0.47) * 62,
+      timeSeconds: index / 240,
+    })),
     marks: [],
     warnings: [],
   };
   try {
     const result = await renderScreenProject(project, {
       outPrefix: join(root, "cursor"), width: 320, height: 180, fps: 30, camera: [],
-      cursor: { size: 28, clickIndicator: false }, keepIntermediates: true,
+      cursor: { size: 28, clickIndicator: false, smoothing: 0.72 }, keepIntermediates: true,
     });
     const frame = execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-ss", "1", "-i", result.videoPath, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
     const points = [];
     for (let y = 0; y < 180; y += 1) for (let x = 0; x < 320; x += 1) {
       const offset = (y * 320 + x) * 3;
       const red = frame[offset] ?? 0, green = frame[offset + 1] ?? 0, blue = frame[offset + 2] ?? 0;
-      if (red > 220 && green > 220 && blue > 220 || red < 25 && green < 25 && blue < 25) points.push({ x, y });
+      if (red > 170 && green > 150 && blue > 190) points.push({ x, y });
     }
     assert.ok(points.length > 10, "o cursor precisa estar visível");
     assert.ok(Math.max(...points.map(({ x }) => x)) - Math.min(...points.map(({ x }) => x)) < 50, "o cursor não pode deixar cópias espalhadas");
     assert.ok(Math.max(...points.map(({ y }) => y)) - Math.min(...points.map(({ y }) => y)) < 50, "o cursor não pode deixar rastro vertical");
+    assert.ok(Math.abs(Math.min(...points.map(({ x }) => x)) - 160) < 12, "o hotspot precisa coincidir com o X do clique");
+    assert.ok(Math.abs(Math.min(...points.map(({ y }) => y)) - 90) < 12, "o hotspot precisa coincidir com o Y do clique");
+    const releaseFrame = execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", result.videoPath, "-ss", "1.5", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
+    const releasePoints = [];
+    for (let y = 0; y < 180; y += 1) for (let x = 0; x < 320; x += 1) {
+      const offset = (y * 320 + x) * 3;
+      const red = releaseFrame[offset] ?? 0, green = releaseFrame[offset + 1] ?? 0, blue = releaseFrame[offset + 2] ?? 0;
+      if (red > 170 && green > 150 && blue > 190) releasePoints.push({ x, y });
+    }
+    const releaseMinX = Math.min(...releasePoints.map(({ x }) => x));
+    const releaseMinY = Math.min(...releasePoints.map(({ y }) => y));
+    assert.ok(Math.abs(releaseMinX - 250) < 12, `o hotspot precisa coincidir com o X da soltura; observado ${releaseMinX}..${Math.max(...releasePoints.map(({ x }) => x))} (${releasePoints.length} pixels)`);
+    assert.ok(Math.abs(releaseMinY - 140) < 12, `o hotspot precisa coincidir com o Y da soltura; observado ${releaseMinY}`);
+    assert.equal(result.manifest.cursor.smoothing, 0.72);
     const rightOffset = (90 * 320 + 319) * 3;
     assert.ok((frame[rightOffset] ?? 0) + (frame[rightOffset + 1] ?? 0) + (frame[rightOffset + 2] ?? 0) > 80, "a borda direita não pode ser preta");
   } finally {

@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("metrics", "windows", "displays", "type-unicode")]
+  [ValidateSet("metrics", "windows", "displays", "type-unicode", "pointer-events")]
   [string]$Command = "metrics",
   [int]$X = 0,
   [int]$Y = 0,
@@ -128,6 +128,8 @@ public static class AutoScreenNative {
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT point, uint flags);
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int virtualKey);
     [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint count, INPUT[] inputs, int size);
     [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr monitor, int dpiType, out uint dpiX, out uint dpiY);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out RECT rect, int size);
@@ -224,6 +226,30 @@ if ($Command -eq "metrics") {
   }
   $result | ConvertTo-Json -Compress
   exit 0
+}
+
+if ($Command -eq "pointer-events") {
+  $lastMask = -1
+  $lastX = [int]::MinValue
+  $lastY = [int]::MinValue
+  $frequency = [Diagnostics.Stopwatch]::Frequency
+  while ($true) {
+    $point = [AutoScreenNative+POINT]::new()
+    if (-not [AutoScreenNative]::GetCursorPos([ref]$point)) { throw "GetCursorPos falhou." }
+    $mask = 0
+    if (([AutoScreenNative]::GetAsyncKeyState(1) -band 0x8000) -ne 0) { $mask = $mask -bor 1 }
+    if (([AutoScreenNative]::GetAsyncKeyState(2) -band 0x8000) -ne 0) { $mask = $mask -bor 2 }
+    if (([AutoScreenNative]::GetAsyncKeyState(4) -band 0x8000) -ne 0) { $mask = $mask -bor 4 }
+    if ($mask -ne $lastMask -or $point.X -ne $lastX -or $point.Y -ne $lastY) {
+      $timestamp = [Diagnostics.Stopwatch]::GetTimestamp()
+      [Console]::Out.WriteLine("{0}`t{1}`t{2}`t{3}`t{4}", $point.X, $point.Y, $mask, $timestamp, $frequency)
+      [Console]::Out.Flush()
+      $lastMask = $mask
+      $lastX = $point.X
+      $lastY = $point.Y
+    }
+    [Threading.Thread]::Sleep(4)
+  }
 }
 
 if ($Command -eq "type-unicode") {

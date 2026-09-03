@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { audioFilterGraph, audioInputArguments, prepareAudioTracks } from "./audio.js";
 import { automaticCameraCues, buildCameraPlan } from "./camera.js";
 import { resolveAutomaticCaptionAnchors, escapeFilterPath, writeAssFile } from "./captions.js";
-import { buildCursorFilters } from "./cursor.js";
+import { buildCursorFilters, writeCursorSpriteAss } from "./cursor.js";
 import { probeMedia, probeVideoCadence, resolveFfmpegPath } from "./ffmpeg.js";
 import { runProcess } from "./process.js";
 import { cleanupScreenProject } from "./recorder.js";
@@ -118,13 +118,18 @@ export async function renderScreenProject(projectInput: CaptureProject, optionsI
   if (captions.length > 0) await writeAssFile(assPath, captions, width, height);
   const preparedAudio = await prepareAudioTracks(options.audio ?? [], renderDirectory, ffmpeg, keepIntermediates);
   const cameraPlan = await buildCameraPlan(camera, normalizedProject, speedMap, width, height, fps);
+  const cursorSize = options.cursor?.size ?? Math.max(24, Math.round(height * 0.036));
+  const cursorAssPath = join(renderDirectory, "cursor.ass");
+  const cursorSprite = cursorMode === "software"
+    ? { path: cursorAssPath, metrics: await writeCursorSpriteAss(cursorAssPath, cursorSize) }
+    : undefined;
   const graph = speedFilterGraph(speedMap);
   graph.push(
     `[sped]tpad=stop_mode=clone:stop_duration=${1 / fps},` +
     `fps=fps=${fps}:start_time=0,trim=end_frame=${expectedFrames},setpts=PTS-STARTPTS[timed]`,
   );
   graph.push(`[timed]${cameraPlan.filter}[camera]`);
-  graph.push(...buildCursorFilters(normalizedProject, speedMap, cameraPlan.frames, width, height, fps, finalDuration, options.cursor));
+  graph.push(...buildCursorFilters(normalizedProject, speedMap, cameraPlan.frames, width, height, fps, finalDuration, options.cursor, cursorSprite));
   graph.push(captions.length > 0 ? `[cursorout]ass=filename='${escapeFilterPath(assPath)}'[vout]` : "[cursorout]null[vout]");
   graph.push(...audioFilterGraph(preparedAudio, finalDuration));
   const graphPath = join(renderDirectory, "filtergraph.txt");
@@ -181,6 +186,7 @@ export async function renderScreenProject(projectInput: CaptureProject, optionsI
         size: options.cursor?.size ?? Math.max(24, Math.round(height * 0.036)),
         clickIndicator: options.cursor?.clickIndicator ?? true,
         clickColor: options.cursor?.clickColor ?? "#16B8F3CC",
+        smoothing: options.cursor?.smoothing ?? 0,
       },
       captions,
       audio: preparedAudio.map((track) => track.manifest),

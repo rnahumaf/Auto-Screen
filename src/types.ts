@@ -30,6 +30,7 @@ export interface RecorderConfig {
   captureBackend?: CaptureBackend;
   fps?: number;
   cursorMode?: CursorMode;
+  observePointerButtons?: boolean;
   ffmpegPath?: string;
   tempDirectory?: string;
   maxDurationSeconds?: number;
@@ -145,6 +146,7 @@ export interface RenderOptions {
     size?: number;
     clickIndicator?: boolean;
     clickColor?: string;
+    smoothing?: number;
   };
   keepIntermediates?: boolean;
   abortSignal?: AbortSignal;
@@ -236,6 +238,7 @@ export interface ScreenManifest {
     size: number;
     clickIndicator: boolean;
     clickColor: string;
+    smoothing: number;
   };
   captions: Caption[];
   audio: AudioManifestEntry[];

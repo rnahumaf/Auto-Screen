@@ -1,5 +1,6 @@
 import { app, dialog, shell } from "electron";
 import { extname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
@@ -57,6 +58,7 @@ export class DesktopController {
         displayIndex: this.selection.capture.displayIndex ?? null,
       },
       project: this.workerStatus.project ?? null,
+      previewUrl: this.workerStatus.previewPath ? pathToFileURL(this.workerStatus.previewPath).href : null,
       doctor: this.doctorResult ?? null,
       lastSavedPath: this.lastSavedPath ?? null,
       error: this.lastError ?? null,
@@ -276,6 +278,12 @@ export class DesktopController {
       };
     }
 
+    const cursorMode = ["software", "native", "hidden"].includes(options?.cursorMode)
+      ? options.cursorMode
+      : options?.showCursor === false
+        ? "hidden"
+        : "native";
+
     this.clearError();
     this.lastSavedPath = undefined;
     this.workerStatus = { phase: "starting", elapsedSeconds: 0, segmentCount: 0, project: null };
@@ -291,7 +299,7 @@ export class DesktopController {
         semanticSource,
         windowMetadata,
         fps: options?.fps === 30 ? 30 : 60,
-        showCursor: options?.showCursor !== false,
+        cursorMode,
       }));
       toolbar.showInactive();
       this.sendState();
@@ -342,11 +350,22 @@ export class DesktopController {
       this.stopStatusTimer();
       this.windows.showMain();
       this.sendState();
-      return this.publicState();
     } catch (error) {
       this.stopStatusTimer();
       this.windows.showMain();
       this.workerStatus = { phase: "idle", elapsedSeconds: 0, segmentCount: 0, project: null };
+      throw error;
+    }
+
+    this.workerStatus = { ...this.workerStatus, phase: "previewing" };
+    this.sendState();
+    try {
+      this.setWorkerStatus(await this.worker.invoke("preview"));
+      this.clearError();
+      this.sendState();
+      return this.publicState();
+    } catch (error) {
+      try { this.setWorkerStatus(await this.worker.invoke("status")); } catch { /* manter estado capturado */ }
       throw error;
     }
   }
@@ -403,7 +422,7 @@ export class DesktopController {
   }
 
   hasPendingWork() {
-    return ["starting", "recording", "pausing", "paused", "resuming", "stopping", "captured", "rendering"]
+    return ["starting", "recording", "pausing", "paused", "resuming", "stopping", "previewing", "captured", "rendering"]
       .includes(this.workerStatus.phase);
   }
 
@@ -421,15 +440,17 @@ export class DesktopController {
       const response = await dialog.showMessageBox(this.windows.mainWindow, {
         type: "warning",
         title: "Encerrar Auto-Screen",
-        message: this.workerStatus.phase === "rendering"
-          ? "O arquivo MP4 ainda está sendo finalizado."
+        message: ["previewing", "rendering"].includes(this.workerStatus.phase)
+          ? this.workerStatus.phase === "previewing"
+            ? "A prévia do vídeo ainda está sendo preparada."
+            : "O arquivo MP4 ainda está sendo finalizado."
           : ["starting", "recording", "pausing", "paused", "resuming", "stopping"].includes(this.workerStatus.phase)
             ? "Há uma gravação em andamento."
             : "Há uma gravação ainda não salva.",
-        detail: this.workerStatus.phase === "rendering"
+        detail: ["previewing", "rendering"].includes(this.workerStatus.phase)
           ? "Encerrar agora pode preservar arquivos temporários para recuperação."
           : "Ao encerrar, a captura temporária será descartada.",
-        buttons: ["Continuar no aplicativo", this.workerStatus.phase === "rendering" ? "Encerrar mesmo assim" : "Encerrar e descartar"],
+        buttons: ["Continuar no aplicativo", ["previewing", "rendering"].includes(this.workerStatus.phase) ? "Encerrar mesmo assim" : "Encerrar e descartar"],
         defaultId: 0,
         cancelId: 0,
         noLink: true,
