@@ -6,6 +6,8 @@ import { runProcess } from "./process.js";
 import type { CaptureSource, DesktopMetrics, DisplayInfo, Rect, WindowInfo } from "./types.js";
 
 function helperPath(): string {
+  const configuredDirectory = process.env.AUTO_SCREEN_ASSETS_DIR;
+  if (configuredDirectory) return resolve(configuredDirectory, "windows-helper.ps1");
   const resolver = createRequire(join(process.cwd(), "__auto_screen_resolver__.cjs"));
   const moduleDirectory = dirname(resolver.resolve("@rnaf/auto-screen"));
   return resolve(moduleDirectory, "..", "assets", "windows-helper.ps1");

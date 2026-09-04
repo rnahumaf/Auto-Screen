@@ -1,10 +1,6 @@
-import { spawn } from "node:child_process";
+import { utilityProcess } from "electron";
 
 const PROTOCOL_PREFIX = "@@AUTO_SCREEN@@";
-
-function nodeExecutable() {
-  return process.env.npm_node_execpath || process.env.NODE || "node";
-}
 
 export class NodeWorkerClient {
   constructor(projectRoot, workerPath) {
@@ -16,34 +12,37 @@ export class NodeWorkerClient {
     this.sequence = 0;
     this.pending = new Map();
     this.closing = false;
+    this.childExited = false;
   }
 
   ensureStarted() {
-    if (this.child && this.child.exitCode === null) return;
+    if (this.child && !this.childExited) return;
     if (this.closing) throw new Error("O processo de gravação está sendo encerrado.");
 
-    const child = spawn(nodeExecutable(), [this.workerPath], {
+    const child = utilityProcess.fork(this.workerPath, [], {
       cwd: this.projectRoot,
-      windowsHide: true,
-      shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: "pipe",
       env: process.env,
+      serviceName: "Auto-Screen Recorder",
     });
     this.child = child;
+    this.childExited = false;
     this.buffer = "";
     this.stderr = "";
 
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => this.consume(chunk));
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => {
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => this.consume(chunk));
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk) => {
       this.stderr = `${this.stderr}${chunk}`.slice(-16_384);
     });
+    child.on("message", (message) => this.consumeMessage(message));
     child.once("error", (error) => this.rejectAll(error));
-    child.once("close", (code) => {
+    child.once("exit", (code) => {
+      this.childExited = true;
       const detail = this.stderr.trim();
       this.rejectAll(new Error(
-        `O processo Node de gravação terminou com código ${code ?? -1}${detail ? `: ${detail}` : "."}`,
+        `O processo de gravação terminou com código ${code ?? -1}${detail ? `: ${detail}` : "."}`,
       ));
       if (this.child === child) this.child = undefined;
     });
@@ -66,12 +65,16 @@ export class NodeWorkerClient {
         this.rejectAll(new Error(`O worker retornou uma mensagem inválida: ${line.slice(0, 300)}`));
         continue;
       }
-      const request = this.pending.get(message.id);
-      if (!request) continue;
-      this.pending.delete(message.id);
-      if (message.ok) request.resolve(message.value);
-      else request.reject(new Error(message.error || "O worker não informou o erro."));
+      this.consumeMessage(message);
     }
+  }
+
+  consumeMessage(message) {
+    const request = this.pending.get(message?.id);
+    if (!request) return;
+    this.pending.delete(message.id);
+    if (message.ok) request.resolve(message.value);
+    else request.reject(new Error(message.error || "O worker não informou o erro."));
   }
 
   rejectAll(error) {
@@ -82,31 +85,28 @@ export class NodeWorkerClient {
   invoke(command, payload) {
     this.ensureStarted();
     const child = this.child;
-    if (!child?.stdin.writable) throw new Error("O processo de gravação não aceita comandos.");
+    if (!child || this.childExited) throw new Error("O processo de gravação não aceita comandos.");
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify({ id, command, payload })}\n`, (error) => {
-        if (!error) return;
+      try {
+        child.postMessage({ id, command, payload });
+      } catch (error) {
         this.pending.delete(id);
         reject(error);
-      });
+      }
     });
   }
 
   async dispose() {
     if (this.closing) return;
     const child = this.child;
-    if (!child || child.exitCode !== null) {
+    if (!child || this.childExited) {
       this.closing = true;
       return;
     }
     try { await this.invoke("cleanup"); } catch { /* melhor esforço */ }
     this.closing = true;
-    if (child.stdin.writable) child.stdin.end();
-    const timer = setTimeout(() => {
-      if (child.exitCode === null) child.kill();
-    }, 2_000);
-    timer.unref();
+    child.kill();
   }
 }

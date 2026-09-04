@@ -47,7 +47,7 @@
     "auto-screen": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsup && tsc --emitDeclarationOnly",
+    "build": "tsup && tsc --emitDeclarationOnly && node scripts/prepare-desktop-runtime.mjs",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test test/core.test.mjs test/human-recorder.test.mjs",
     "check:utf8": "node scripts/check-utf8.mjs",
@@ -55,9 +55,10 @@
     "check": "npm run check:utf8 && npm run typecheck && npm run app:check && npm test",
     "doctor": "npm run build && node dist/cli.js doctor",
     "app:install": "npm run app:node && npm --prefix apps/desktop install",
-    "app": "npm run app:node && npm run build && npm --prefix apps/desktop start",
+    "app": "npm run app:node && npm --prefix apps/desktop start",
     "desktop:install": "npm run app:install",
     "desktop": "npm run app",
+    "desktop:dist": "npm --prefix apps/desktop run dist:win",
     "demo:setup": "node scripts/fetch-demo-soundfont.mjs",
     "demo": "npm run build && node scripts/run-demo.mjs",
     "test:integration": "npm run build && node scripts/run-integration.mjs",

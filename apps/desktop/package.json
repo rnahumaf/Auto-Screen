@@ -3,16 +3,79 @@
   "version": "0.1.0",
   "private": true,
   "description": "Interface humana do Auto-Screen para Windows.",
+  "author": "Rodrigo Nahum",
+  "license": "MIT",
+  "homepage": "https://github.com/rnahumaf/Auto-Screen",
   "type": "module",
   "main": "main.js",
   "scripts": {
+    "prepare:runtime": "npm --prefix ../.. run build",
+    "prestart": "npm run prepare:runtime",
     "start": "electron .",
+    "predist:win": "npm run prepare:runtime",
+    "dist:win": "electron-builder --win nsis portable --x64 --publish never",
+    "dist:dir": "npm run prepare:runtime && electron-builder --win dir --x64 --publish never",
     "check": "node --check main.js && node --check controller.js && node --check human-recorder.js && node --check worker.js && node --check worker-client.js && node --check window-manager.js && node --check preload.cjs && node --check renderer/app.js && node --check renderer/toolbar.js && node --check renderer/region.js"
   },
   "devDependencies": {
-    "electron": "44.1.1"
+    "electron": "44.1.1",
+    "electron-builder": "26.15.3"
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "4.2.6",
+    "spessasynth_core": "4.3.16",
+    "zod": "4.4.3"
+  },
+  "build": {
+    "appId": "com.rnaf.auto-screen",
+    "productName": "Auto-Screen",
+    "copyright": "Copyright © 2026 Rodrigo Nahum",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@nut-tree-fork/libnut*/**/*"
+    ],
+    "directories": {
+      "output": "../../release",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*",
+      "!build{,/**/*}",
+      "!node_modules/.cache{,/**/*}"
+    ],
+    "extraResources": [
+      {
+        "from": "../../assets",
+        "to": "auto-screen-assets",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../../LICENSE",
+        "to": "licenses/LICENSE.txt"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.svg",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Auto-Screen",
+      "runAfterFinish": true,
+      "artifactName": "Auto-Screen-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Auto-Screen-Portable-${version}-${arch}.${ext}"
+    }
   }
 }

@@ -23,3 +23,9 @@
 ## Processos externos
 
 FFmpeg, FFprobe e PowerShell são iniciados sem shell. Filtergraphs são passados por arquivo. O helper tenta PowerShell 7 e cai para Windows PowerShell 5.1. Ele contém somente P/Invoke estático e ativa DPI Per-Monitor V2. Texto autorizado chega por stdin ao comando isolado `type-unicode`, que compara o HWND em primeiro plano a cada caractere antes de chamar `SendInput(KEYEVENTF_UNICODE)`; títulos ou texto nunca compõem uma linha de shell.
+
+## Distribuição desktop
+
+O aplicativo Electron é empacotado em ASAR, enquanto os binários nativos do nut.js ficam desempacotados para carregamento pelo Windows. O build copia o runtime compilado da biblioteca para o aplicativo e instala o helper PowerShell em `resources/auto-screen-assets`; não existe dependência do checkout nem de uma instalação de Node no computador do usuário.
+
+Operações da biblioteca são executadas em um `UtilityProcess` do Electron e se comunicam com o processo principal por mensagens estruturadas. O renderer permanece em sandbox, com `contextIsolation` habilitado e uma API IPC estreita exposta pelo preload. FFmpeg, FFprobe e PowerShell permanecem processos externos sem shell.

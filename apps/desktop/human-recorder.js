@@ -7,7 +7,7 @@ import {
   createScreenRecorder,
   probeMedia,
   probeVideoCadence,
-} from "../../dist/index.js";
+} from "./runtime/index.js";
 
 const DEFAULT_MAX_DURATION_SECONDS = 3_600;
 

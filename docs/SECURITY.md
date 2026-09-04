@@ -25,3 +25,11 @@ Em 4 de agosto de 2026, `npm audit` reporta sete entradas moderadas originadas n
 ## Rede e artefatos
 
 O runtime não acessa rede. `npm run demo:setup` é um comando explícito de desenvolvimento que baixa GeneralUser GS de um commit fixo e confirma SHA-256 antes de gravar em `output/`, diretório ignorado pelo Git.
+
+## Distribuição Windows
+
+O Setup e o executável portátil incluem Electron/Node, o JavaScript compilado do Auto-Screen, dependências npm de produção, módulos nativos e o helper PowerShell. FFmpeg, FFprobe e SoundFonts não são incorporados. O aplicativo não baixa esses componentes automaticamente.
+
+O núcleo roda em um `UtilityProcess` separado. O código do aplicativo fica em ASAR e somente módulos nativos que precisam ser carregados pelo sistema operacional são desempacotados. O renderer continua sem acesso direto a Node, filesystem ou processos.
+
+As releases geram SHA-256 dos executáveis no mesmo runner que os empacota. Ainda não há certificado de assinatura de código configurado; isso é informado ao usuário, e o Windows SmartScreen pode exibir um aviso de reputação. A adoção futura de assinatura deverá usar segredos exclusivos do ambiente de release e nunca armazenar a chave privada no repositório.

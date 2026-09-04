@@ -5,7 +5,7 @@ import {
   listWindows,
   renderScreenProject,
   runDoctor,
-} from "../../dist/index.js";
+} from "./runtime/index.js";
 import { HumanRecorderSession } from "./human-recorder.js";
 
 function messageOf(error) {
@@ -230,7 +230,8 @@ let buffer = "";
 let queue = Promise.resolve();
 
 function respond(message) {
-  process.stdout.write(`${PROTOCOL_PREFIX}${JSON.stringify(message)}\n`);
+  if (process.parentPort) process.parentPort.postMessage(message);
+  else process.stdout.write(`${PROTOCOL_PREFIX}${JSON.stringify(message)}\n`);
 }
 
 async function dispatch(message) {
@@ -243,30 +244,36 @@ async function dispatch(message) {
   }
 }
 
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  const lines = buffer.split(/\r?\n/);
-  buffer = lines.pop() ?? "";
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    let message;
-    try {
-      message = JSON.parse(line);
-    } catch (error) {
-      respond({ id: null, ok: false, error: `Mensagem JSON inválida: ${messageOf(error)}` });
-      continue;
-    }
-    queue = queue.then(() => dispatch(message), () => dispatch(message));
-  }
-});
-
-process.stdin.on("end", () => {
-  queue = queue.finally(async () => {
-    await worker.cleanup();
-    process.exit(0);
+if (process.parentPort) {
+  process.parentPort.on("message", (event) => {
+    queue = queue.then(() => dispatch(event.data), () => dispatch(event.data));
   });
-});
+} else {
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch (error) {
+        respond({ id: null, ok: false, error: `Mensagem JSON inválida: ${messageOf(error)}` });
+        continue;
+      }
+      queue = queue.then(() => dispatch(message), () => dispatch(message));
+    }
+  });
+
+  process.stdin.on("end", () => {
+    queue = queue.finally(async () => {
+      await worker.cleanup();
+      process.exit(0);
+    });
+  });
+}
 
 process.on("SIGTERM", () => {
   void worker.cleanup().finally(() => process.exit(0));

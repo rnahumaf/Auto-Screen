@@ -4,9 +4,11 @@ A aplicação em `apps/desktop` transforma o motor do Auto-Screen em um gravador
 
 ## Instalação e execução
 
-A biblioteca continua aceitando Node.js 20. Para instalar o Electron atual, a interface exige Node.js 22.12 ou mais recente.
+Usuários finais podem baixar o **Setup x64** ou a versão **Portable x64** em [GitHub Releases](https://github.com/rnahumaf/Auto-Screen/releases/latest). O Setup permite escolher a pasta, cria atalhos no Desktop e no menu Iniciar e oferece iniciar o aplicativo ao concluir. A versão portátil roda diretamente, sem instalação. Ambas já incluem Electron, Node, o runtime do Auto-Screen e as dependências nativas.
 
-Na raiz do repositório:
+FFmpeg e FFprobe continuam externos e precisam estar no `PATH`. O aplicativo verifica esses componentes antes de gravar. As compilações públicas atuais não têm assinatura de código comercial; o Windows SmartScreen pode pedir confirmação, e cada release oferece `SHA256SUMS.txt` para conferir a integridade dos executáveis.
+
+Para desenvolvimento, a biblioteca continua aceitando Node.js 20. A interface Electron exige Node.js 22.12 ou mais recente. Na raiz do repositório:
 
 ```powershell
 npm install
@@ -22,6 +24,16 @@ npm run desktop
 ```
 
 O Electron é instalado somente em `apps/desktop/node_modules`. FFmpeg, FFprobe e PowerShell continuam pertencendo ao ambiente local.
+
+Para gerar os dois artefatos de distribuição:
+
+```powershell
+npm ci
+npm ci --prefix apps/desktop
+npm run desktop:dist
+```
+
+O resultado é gravado em `release/`. Tags Git `v*` executam o mesmo fluxo em Windows pelo GitHub Actions e publicam os executáveis e checksums na GitHub Release.
 
 ## Fontes
 
@@ -110,7 +122,7 @@ Isso preserva o enquadramento estático e aplica a apresentação de cursor esco
 
 ## Segurança da interface
 
-- A biblioteca e as dependências nativas rodam em um processo Node separado do Electron.
+- A biblioteca e as dependências nativas rodam em um `UtilityProcess` isolado do processo principal do Electron.
 - `contextIsolation` permanece ativado.
 - `nodeIntegration` permanece desativado.
 - As janelas Electron usam sandbox.

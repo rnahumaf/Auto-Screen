@@ -6,7 +6,10 @@ import { WindowManager } from "./window-manager.js";
 import { NodeWorkerClient } from "./worker-client.js";
 
 const baseDirectory = dirname(fileURLToPath(import.meta.url));
-const projectRoot = join(baseDirectory, "..", "..");
+const projectRoot = app.isPackaged ? process.resourcesPath : join(baseDirectory, "..", "..");
+process.env.AUTO_SCREEN_ASSETS_DIR = app.isPackaged
+  ? join(process.resourcesPath, "auto-screen-assets")
+  : join(projectRoot, "assets");
 process.chdir(projectRoot);
 
 const windows = new WindowManager(baseDirectory, join(baseDirectory, "preload.cjs"));

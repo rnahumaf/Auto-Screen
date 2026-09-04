@@ -19,12 +19,22 @@ A versão atual é `@rnaf/auto-screen@0.1.0`.
 
 ## Requisitos e instalação
 
-- Windows 10 ou 11.
-- Node.js 20 ou mais recente.
+- Windows 10 ou 11 x64.
 - FFmpeg e FFprobe no `PATH`, com `ddagrab`, D3D11, `hwdownload`, `fps`, `libx264`, AAC, `zoompan`, `ass`, `setpts` e `amix`. `gdigrab` é necessário apenas para o backend degradado explícito.
 - Em máquinas com várias GPUs, `listDisplays()` expõe `adapterIndex` e `outputIndex`; o índice público do display continua contíguo e não é inferido de nomes como `DISPLAY5`.
 
-Instale pelo registro npm:
+### Aplicativo para Windows
+
+Baixe a versão mais recente em [GitHub Releases](https://github.com/rnahumaf/Auto-Screen/releases/latest):
+
+- **Setup x64:** instalador assistido, com escolha de pasta e atalhos no Desktop e no menu Iniciar.
+- **Portable x64:** executável autônomo que não precisa ser instalado.
+
+O aplicativo já inclui Electron, o runtime do Auto-Screen e suas dependências Node; não é necessário instalar Node.js para usá-lo. FFmpeg e FFprobe continuam sendo requisitos externos e o diagnóstico da tela inicial verifica se estão disponíveis. As compilações públicas atuais não possuem assinatura de código comercial, portanto o Windows SmartScreen pode pedir confirmação. Compare o arquivo baixado com `SHA256SUMS.txt` publicado na mesma release.
+
+### Biblioteca npm
+
+Para integrar o Auto-Screen a código TypeScript/JavaScript, use Node.js 20 ou mais recente e instale pelo registro npm:
 
 ```powershell
 npm install @rnaf/auto-screen
@@ -35,9 +45,18 @@ Para contribuir:
 ```powershell
 git clone https://github.com/rnahumaf/Auto-Screen.git
 cd Auto-Screen
-npm install
+npm ci
+npm ci --prefix apps/desktop
 npm run doctor
 ```
+
+Para gerar localmente o instalador e a versão portátil:
+
+```powershell
+npm run desktop:dist
+```
+
+Os artefatos são criados em `release/`. Uma tag `v*` também aciona a validação, o empacotamento para Windows e a publicação automática da GitHub Release.
 
 Defina `AUTO_SCREEN_FFMPEG_PATH` ou passe `ffmpegPath` quando o executável não estiver no `PATH`.
 
