@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { basename, join, resolve } from "node:path";
 import { rename, rm, writeFile } from "node:fs/promises";
+import { WebcamRecorderSession } from "./webcam.js";
+import { MicrophoneRecorderSession } from "./microphone.js";
 import {
   cleanupScreenProject,
   createScreenRecorder,
@@ -58,6 +60,12 @@ function assertCompatible(projects) {
       size.height !== expectedSize.height
     ) {
       throw new Error("Os segmentos não possuem a mesma fonte, resolução e taxa de quadros.");
+    }
+    if (Boolean(project.webcam) !== Boolean(reference.webcam)) {
+      throw new Error("Os segmentos não possuem a mesma configuração de webcam.");
+    }
+    if (Boolean(project.microphone) !== Boolean(reference.microphone)) {
+      throw new Error("Os segmentos não possuem a mesma configuração de microfone.");
     }
   }
 }
@@ -140,6 +148,30 @@ async function consolidateProjects(projects, ffmpegPath) {
   }
 
   const timeline = shiftedTimeline(projects);
+  const webcamSegments = [];
+  const microphoneSegments = [];
+  if (base.webcam) {
+    if (projects.some((project) => !project.webcam || project.webcam.segments.length !== 1)) {
+      throw new Error("Um segmento da webcam está ausente.");
+    }
+    for (const [index, project] of projects.entries()) {
+      const segment = project.webcam.segments[0];
+      const destination = join(workDirectory, `webcam-segment-${String(index + 1).padStart(4, "0")}.mkv`);
+      await rename(resolve(segment.path), destination);
+      webcamSegments.push({ ...segment, path: destination });
+    }
+  }
+  if (base.microphone) {
+    if (projects.some((project) => !project.microphone || project.microphone.segments.length !== 1)) {
+      throw new Error("Um segmento do microfone está ausente.");
+    }
+    for (const [index, project] of projects.entries()) {
+      const segment = project.microphone.segments[0];
+      const destination = join(workDirectory, `microphone-segment-${String(index + 1).padStart(4, "0")}.wav`);
+      await rename(resolve(segment.path), destination);
+      microphoneSegments.push({ ...segment, path: destination });
+    }
+  }
   const warnings = projects.flatMap((project) => project.warnings);
   warnings.push(
     copied
@@ -164,6 +196,8 @@ async function consolidateProjects(projects, ffmpegPath) {
     ...base,
     rawVideoPath,
     rawDurationSeconds: probe.durationSeconds,
+    ...(base.webcam ? { webcam: { layout: base.webcam.layout, segments: webcamSegments } } : {}),
+    ...(base.microphone ? { microphone: { segments: microphoneSegments } } : {}),
     capture: {
       ...base.capture,
       encodedSize: { width: video.width, height: video.height },
@@ -176,17 +210,50 @@ async function consolidateProjects(projects, ffmpegPath) {
   };
 }
 
+async function assembleMicrophone(project, ffmpegPath) {
+  if (!project.microphone) return project;
+  const segments = project.microphone.segments;
+  const output = join(project.workDirectory, "microphone-raw.wav");
+  const graph = segments.map((segment, index) => {
+    const trimStart = Math.max(0, segment.startOffsetSeconds);
+    const delayMs = Math.round(Math.max(0, -segment.startOffsetSeconds) * 1_000);
+    return `[${index}:a]atrim=start=${trimStart},asetpts=PTS-STARTPTS,aresample=48000,` +
+      `${delayMs > 0 ? `adelay=${delayMs},` : ""}apad,atrim=duration=${segment.durationSeconds},asetpts=PTS-STARTPTS[mic${index}]`;
+  });
+  graph.push(`${segments.map((_, index) => `[mic${index}]`).join("")}concat=n=${segments.length}:v=0:a=1,` +
+    `apad,atrim=duration=${project.rawDurationSeconds}[micout]`);
+  await runProcess(ffmpegPath, [
+    "-y", "-hide_banner", "-loglevel", "warning",
+    ...segments.flatMap((segment) => ["-i", segment.path]),
+    "-filter_complex", graph.join(";"), "-map", "[micout]",
+    "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", output,
+  ], project.workDirectory);
+  const probe = await probeMedia(output, ffmpegPath);
+  if (!probe.streams.some((stream) => stream.codecType === "audio") || probe.durationSeconds <= 0) {
+    throw new Error("A faixa consolidada do microfone está vazia.");
+  }
+  project.microphone.path = output;
+  return project;
+}
+
 export class HumanRecorderSession {
   constructor(config, dependencies = {}) {
+    const { webcam, microphone, ...recorderConfig } = config;
     this.config = {
-      ...config,
+      ...recorderConfig,
       capture: config.capture,
       maxDurationSeconds: config.maxDurationSeconds ?? DEFAULT_MAX_DURATION_SECONDS,
     };
+    this.webcamConfig = webcam?.enabled ? webcam : undefined;
+    this.microphoneConfig = microphone?.enabled ? microphone : undefined;
     this.createRecorder = dependencies.createRecorder ?? createScreenRecorder;
+    this.createWebcam = dependencies.createWebcam ?? ((options) => new WebcamRecorderSession(options));
+    this.createMicrophone = dependencies.createMicrophone ?? ((options) => new MicrophoneRecorderSession(options));
     this.consolidate = dependencies.consolidateProjects ?? consolidateProjects;
     this.ffmpegPath = config.ffmpegPath ?? process.env.AUTO_SCREEN_FFMPEG_PATH ?? "ffmpeg";
     this.currentRecorder = undefined;
+    this.currentWebcam = undefined;
+    this.currentMicrophone = undefined;
     this.currentStartedAt = 0;
     this.completedSeconds = 0;
     this.segmentProjects = [];
@@ -196,6 +263,7 @@ export class HumanRecorderSession {
   }
 
   get state() { return this._state; }
+  get previewFrame() { return this.currentWebcam?.previewFrame ?? null; }
   get segmentCount() { return this._segmentCount || this.segmentProjects.length; }
   get elapsedSeconds() {
     if (["recording", "pausing", "stopping"].includes(this._state) && this.currentStartedAt > 0) {
@@ -218,20 +286,121 @@ export class HumanRecorderSession {
   }
 
   async openSegment() {
+    if (this.webcamConfig) {
+      this.currentWebcam = this.createWebcam({
+        deviceId: this.webcamConfig.deviceId,
+        ...(this.microphoneConfig ? { microphoneDeviceId: this.microphoneConfig.deviceId } : {}),
+        ffmpegPath: this.ffmpegPath,
+      });
+      await this.currentWebcam.start();
+    }
+    if (this.microphoneConfig && !this.webcamConfig) {
+      this.currentMicrophone = this.createMicrophone({ deviceId: this.microphoneConfig.deviceId, ffmpegPath: this.ffmpegPath });
+      try { await this.currentMicrophone.start(); }
+      catch (error) {
+        await this.currentWebcam?.cleanup();
+        this.currentWebcam = undefined;
+        throw error;
+      }
+    }
     const recorder = this.createRecorder({
       ...this.config,
       maxDurationSeconds: this.remainingDuration(),
     });
     this.currentRecorder = recorder;
-    await recorder.start();
+    try { await recorder.start(); }
+    catch (error) {
+      await this.currentWebcam?.cleanup();
+      await this.currentMicrophone?.cleanup();
+      this.currentWebcam = undefined;
+      this.currentMicrophone = undefined;
+      throw error;
+    }
     this.currentStartedAt = performance.now();
   }
 
   async closeSegment() {
     const recorder = this.currentRecorder;
     if (!recorder) throw new Error("Não há segmento ativo para encerrar.");
-    const project = await recorder.stop();
+    const webcam = this.currentWebcam;
+    const microphone = this.currentMicrophone;
+    // A captura de áudio continua até o encerramento da tela para não perder os últimos quadros.
+    const [screenResult] = await Promise.allSettled([Promise.resolve().then(() => recorder.stop())]);
+    const [webcamResult, microphoneResult] = await Promise.allSettled([
+      webcam ? webcam.stop() : Promise.resolve(undefined),
+      microphone ? microphone.stop() : Promise.resolve(undefined),
+    ]);
+    if (screenResult.status === "rejected" || webcamResult.status === "rejected" || microphoneResult.status === "rejected") {
+      await webcam?.cleanup();
+      await microphone?.cleanup();
+      throw screenResult.status === "rejected" ? screenResult.reason : webcamResult.status === "rejected" ? webcamResult.reason : microphoneResult.reason;
+    }
+    const project = screenResult.value;
+    const screenEndMs = Number.isFinite(recorder.timelineStopMilliseconds) && recorder.timelineStopMilliseconds > 0
+      ? recorder.timelineStopMilliseconds
+      : recorder.timelineEpochMilliseconds + project.rawDurationSeconds * 1_000;
+    const screenStartMs = screenEndMs - project.rawDurationSeconds * 1_000;
+    const offsetFor = (media) => Number.isFinite(media.endMs)
+      ? (screenStartMs - (media.endMs - media.durationSeconds * 1_000)) / 1_000
+      : (recorder.timelineEpochMilliseconds - media.epochMs) / 1_000;
+    if (webcam && webcamResult.value) {
+      const startOffsetSeconds = offsetFor(webcamResult.value);
+      const missingCameraSeconds = project.rawDurationSeconds + startOffsetSeconds - webcamResult.value.durationSeconds;
+      if (missingCameraSeconds > 1) {
+        await webcam.cleanup();
+        throw new Error("A webcam parou antes da tela. Verifique a conexão da câmera e grave novamente.");
+      }
+      const destination = join(project.workDirectory, "webcam.mkv");
+      await rename(webcamResult.value.path, destination);
+      project.webcam = {
+        layout: {
+          size: this.webcamConfig.size,
+          shape: this.webcamConfig.shape,
+          border: this.webcamConfig.border,
+          borderColor: this.webcamConfig.borderColor,
+          position: this.webcamConfig.position,
+          backgroundBlur: this.webcamConfig.backgroundBlur ?? 0,
+          faceRetouch: this.webcamConfig.faceRetouch ?? 0,
+        },
+        segments: [{
+          path: destination,
+          startOffsetSeconds,
+          durationSeconds: project.rawDurationSeconds,
+        }],
+      };
+    }
+    const microphoneMedia = webcam && this.microphoneConfig
+      ? webcamResult.value?.microphone
+      : microphoneResult.value;
+    if (this.microphoneConfig && !microphoneMedia) {
+      await webcam?.cleanup();
+      throw new Error("A captura conjunta não gerou áudio do microfone.");
+    }
+    if (microphoneMedia) {
+      const latencyMs = this.microphoneConfig?.latencyMs ?? 0;
+      if (!Number.isInteger(latencyMs) || latencyMs < 0 || latencyMs > 1_000 || latencyMs % 25 !== 0) {
+        throw new RangeError("A compensação de latência do microfone é inválida.");
+      }
+      const startOffsetSeconds = offsetFor(microphoneMedia) + latencyMs / 1_000;
+      const missingSeconds = project.rawDurationSeconds + startOffsetSeconds - microphoneMedia.durationSeconds;
+      if (missingSeconds > 0.5) {
+        project.warnings.push(`Microfone: os últimos ${missingSeconds.toFixed(1)} s deste trecho não contêm áudio; o vídeo foi preservado.`);
+      }
+      const destination = join(project.workDirectory, "microphone.wav");
+      await rename(microphoneMedia.path, destination);
+      project.microphone = {
+        segments: [{
+          path: destination,
+          startOffsetSeconds,
+          durationSeconds: project.rawDurationSeconds,
+        }],
+      };
+    }
+    await webcam?.cleanup();
+    await microphone?.cleanup();
     this.currentRecorder = undefined;
+    this.currentWebcam = undefined;
+    this.currentMicrophone = undefined;
     this.currentStartedAt = 0;
     this.segmentProjects.push(project);
     this.completedSeconds = this.segmentProjects.reduce((total, item) => total + item.rawDurationSeconds, 0);
@@ -286,6 +455,7 @@ export class HumanRecorderSession {
       if (this.segmentProjects.length === 0) throw new Error("Nenhum segmento válido foi gravado.");
       this._segmentCount = this.segmentProjects.length;
       this.finalProject = await this.consolidate(this.segmentProjects, this.ffmpegPath);
+      this.finalProject = await assembleMicrophone(this.finalProject, this.ffmpegPath);
       this.completedSeconds = this.finalProject.rawDurationSeconds;
       this._state = "stopped";
       return this.finalProject;
@@ -296,6 +466,14 @@ export class HumanRecorderSession {
   }
 
   async cleanup() {
+    if (this.currentWebcam) {
+      try { await this.currentWebcam.cleanup(); } catch { /* melhor esforço */ }
+      this.currentWebcam = undefined;
+    }
+    if (this.currentMicrophone) {
+      try { await this.currentMicrophone.cleanup(); } catch { /* melhor esforço */ }
+      this.currentMicrophone = undefined;
+    }
     const projects = [];
     if (this.finalProject) {
       projects.push(this.finalProject);

@@ -4,6 +4,18 @@ import type { CaptureProject, RecorderConfig, RenderOptions, ScreenScript } from
 const finite = z.number().finite();
 const nonNegative = finite.min(0);
 const positive = finite.positive();
+const webcamLayoutSchema = z.object({
+  size: z.enum(["small", "medium", "large"]),
+  shape: z.enum(["square", "circle"]),
+  border: z.enum(["none", "black", "color"]),
+  borderColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  position: z.enum([
+    "top-left", "top-center", "top-right", "center-left", "center", "center-right",
+    "bottom-left", "bottom-center", "bottom-right",
+  ]),
+  backgroundBlur: finite.int().min(0).max(100).optional(),
+  faceRetouch: finite.int().min(0).max(100).optional(),
+}).strict();
 const rectSchema = z.object({ x: finite, y: finite, width: positive, height: positive }).strict();
 const captureSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("display"), displayIndex: nonNegative.int().optional() }).strict(),
@@ -108,6 +120,7 @@ const audioTrackSchema = z.object({
 const renderSchema = z.object({
   width: finite.int().min(16).max(8_192).optional(), height: finite.int().min(16).max(8_192).optional(),
   fps: finite.int().min(1).max(120).optional(), ffmpegPath: z.string().min(1).optional(),
+  quality: z.enum(["high", "balanced", "compact"]).optional(),
   captions: z.array(captionSchema).max(1_000).optional(), camera: z.array(cameraSchema).max(10_000).optional(),
   speed: z.array(speedSchema).max(1_000).optional(), audio: z.array(audioTrackSchema).max(64).optional(),
   cursor: z.object({
@@ -144,6 +157,18 @@ const captureProjectSchema = z.object({
     timing: z.object({ firstFrameDelayMs: nonNegative }).strict(), cadence: cadenceSchema,
   }).strict(),
   rawDurationSeconds: positive,
+  webcam: z.object({
+    layout: webcamLayoutSchema,
+    segments: z.array(z.object({
+      path: z.string().min(1), startOffsetSeconds: finite, durationSeconds: positive,
+    }).strict()).min(1).max(1_000),
+  }).strict().optional(),
+  microphone: z.object({
+    path: z.string().min(1).optional(),
+    segments: z.array(z.object({
+      path: z.string().min(1), startOffsetSeconds: finite, durationSeconds: positive,
+    }).strict()).min(1).max(1_000),
+  }).strict().optional(),
   actions: z.array(z.object({
     type: z.enum(["moveMouse", "click", "scroll", "typeText", "pressKey", "wait", "mark"]),
     requestedAtSeconds: nonNegative, actualAtSeconds: nonNegative, durationSeconds: nonNegative,

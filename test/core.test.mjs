@@ -224,6 +224,50 @@ test("compõe vídeo H.264/AAC com câmera, legenda, velocidade e áudio", { tim
   }
 });
 
+test("adianta e atrasa a voz na faixa final conforme o ajuste de sincronização", { timeout: 60_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "auto-screen-audio-sync-"));
+  const projectDir = join(root, "project");
+  await mkdir(projectDir);
+  const rawVideoPath = join(projectDir, "capture.mkv");
+  const audioPath = join(root, "pulse.wav");
+  await writeFile(join(projectDir, ".auto-screen-workdir"), "audio-sync-token", "utf8");
+  execFileSync("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=size=320x180:rate=30:duration=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", rawVideoPath]);
+  execFileSync("ffmpeg", ["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=0.1", "-af", "adelay=500", "-ac", "1", audioPath]);
+  const project = {
+    schemaVersion: 2, platform: "win32", createdAt: new Date().toISOString(), rawVideoPath,
+    workDirectory: projectDir, workDirectoryToken: "audio-sync-token",
+    capture: syntheticCapture({ x: 0, y: 0, width: 320, height: 180 }, 30),
+    rawDurationSeconds: 2, actions: [], pointerPath: [], marks: [], warnings: [],
+  };
+  const firstLoudSecond = (path) => {
+    const pcm = execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", path, "-map", "0:a:0", "-ac", "1", "-ar", "48000", "-f", "s16le", "pipe:1"]);
+    for (let sample = 0; sample < pcm.length / 2; sample += 480) {
+      let peak = 0;
+      for (let index = sample; index < Math.min(sample + 480, pcm.length / 2); index += 1) {
+        peak = Math.max(peak, Math.abs(pcm.readInt16LE(index * 2)));
+      }
+      if (peak > 800) return sample / 48_000;
+    }
+    throw new Error("O tom de teste não foi encontrado no áudio final.");
+  };
+  try {
+    const delayed = await renderScreenProject(project, {
+      outPrefix: join(root, "delayed"), width: 320, height: 180, fps: 30,
+      audio: [{ source: { kind: "file", path: audioPath }, startSeconds: 0.3 }],
+    });
+    const advanced = await renderScreenProject(project, {
+      outPrefix: join(root, "advanced"), width: 320, height: 180, fps: 30,
+      audio: [{ source: { kind: "file", path: audioPath }, trimStartSeconds: 0.2 }],
+    });
+    const delayedAt = firstLoudSecond(delayed.videoPath);
+    const advancedAt = firstLoudSecond(advanced.videoPath);
+    assert.ok(Math.abs(delayedAt - 0.8) < 0.1, `Voz atrasada começou em ${delayedAt.toFixed(2)} s.`);
+    assert.ok(Math.abs(advancedAt - 0.3) < 0.1, `Voz adiantada começou em ${advancedAt.toFixed(2)} s.`);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("renderiza trajetória longa de um único cursor por software sem exceder o parser", { timeout: 60_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "auto-screen-cursor-test-"));
   const projectDir = join(root, "project");
@@ -373,6 +417,72 @@ test("cancelamento da renderização não publica resultado parcial", { timeout:
     assert.equal(await readFile(`${outPrefix}.mp4`, "utf8"), "resultado anterior");
     assert.equal(await readFile(`${outPrefix}.json`, "utf8"), "manifesto anterior");
     await access(rawVideoPath);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("compõe webcam segmentada em círculo ou quadrado com borda e posição", { timeout: 120_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "auto-screen-webcam-test-"));
+  const projectDir = join(root, "project");
+  await mkdir(projectDir);
+  const rawVideoPath = join(projectDir, "capture.mkv");
+  const webcamPaths = [join(projectDir, "webcam-1.mkv"), join(projectDir, "webcam-2.mkv")];
+  await writeFile(join(projectDir, ".auto-screen-workdir"), "webcam-test-token", "utf8");
+  for (const [path, color, duration] of [
+    [rawVideoPath, "0x204060", "2"],
+    [webcamPaths[0], "0xE04030", "1"],
+    [webcamPaths[1], "0xE0A030", "1"],
+  ]) {
+    execFileSync("ffmpeg", [
+      "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+      "-i", `color=c=${color}:s=320x180:r=30`, "-t", duration,
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", path,
+    ]);
+  }
+  const project = {
+    schemaVersion: 2, platform: "win32", createdAt: new Date().toISOString(),
+    rawVideoPath, workDirectory: projectDir, workDirectoryToken: "webcam-test-token",
+    capture: syntheticCapture({ x: 0, y: 0, width: 320, height: 180 }, 30),
+    rawDurationSeconds: 2, actions: [], pointerPath: [], marks: [], warnings: [],
+    webcam: {
+      layout: { size: "large", shape: "circle", border: "color", borderColor: "#00FF00", position: "top-left" },
+      segments: webcamPaths.map((path) => ({ path, startOffsetSeconds: 0, durationSeconds: 1 })),
+    },
+  };
+  function frameAt(path, seconds) {
+    return execFileSync("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-ss", String(seconds), "-i", path,
+      "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+    ]);
+  }
+  function rgb(frame, x, y) {
+    const offset = (y * 320 + x) * 3;
+    return [...frame.subarray(offset, offset + 3)];
+  }
+  try {
+    const circle = await renderScreenProject(project, {
+      outPrefix: join(root, "circle"), width: 320, height: 180, fps: 30,
+      camera: [], quality: "high", keepIntermediates: true,
+    });
+    const first = frameAt(circle.videoPath, 0.5);
+    const second = frameAt(circle.videoPath, 1.5);
+    assert.ok(rgb(first, 8, 8)[2] > rgb(first, 8, 8)[0], "o canto fora do círculo preserva a tela");
+    assert.ok(rgb(first, 37, 9)[1] > 130, "a borda colorida aparece no círculo");
+    assert.ok(rgb(first, 37, 37)[0] > 140, "o primeiro segmento aparece dentro do círculo");
+    assert.ok(rgb(second, 37, 37)[1] > rgb(first, 37, 37)[1] + 40, "o segundo segmento continua após a pausa");
+    assert.equal(circle.manifest.webcam.segmentCount, 2);
+    assert.equal(circle.manifest.output.quality, "high");
+
+    project.webcam.layout = { size: "medium", shape: "square", border: "black", borderColor: "#00FF00", position: "bottom-right" };
+    const square = await renderScreenProject(project, {
+      outPrefix: join(root, "square"), width: 320, height: 180, fps: 30,
+      camera: [], quality: "compact", keepIntermediates: true,
+    });
+    const squareFrame = frameAt(square.videoPath, 0.5);
+    const edge = rgb(squareFrame, 265, 148);
+    assert.ok(edge.every((channel) => channel < 90), "a borda preta aparece no quadrado");
+    assert.ok(rgb(squareFrame, 278, 148)[0] > 130, "a câmera aparece no canto inferior direito");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

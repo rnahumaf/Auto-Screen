@@ -1,6 +1,6 @@
 {
   "name": "auto-screen-desktop",
-  "version": "0.1.0",
+  "version": "0.3.4",
   "private": true,
   "description": "Interface humana do Auto-Screen para Windows.",
   "author": "Rodrigo Nahum",
@@ -12,10 +12,14 @@
     "prepare:runtime": "npm --prefix ../.. run build",
     "prestart": "npm run prepare:runtime",
     "start": "electron .",
-    "predist:win": "npm run prepare:runtime",
+    "predist:win": "npm --prefix ../.. run check:models && npm run prepare:runtime",
     "dist:win": "electron-builder --win nsis portable --x64 --publish never",
     "dist:dir": "npm run prepare:runtime && electron-builder --win dir --x64 --publish never",
-    "check": "node --check main.js && node --check controller.js && node --check human-recorder.js && node --check worker.js && node --check worker-client.js && node --check window-manager.js && node --check preload.cjs && node --check renderer/app.js && node --check renderer/toolbar.js && node --check renderer/region.js"
+    "test:effects": "electron test/effects-smoke.mjs",
+    "test:live-overlay": "electron test/live-overlay-smoke.mjs",
+    "test:setup-preview": "electron test/setup-preview-smoke.mjs",
+    "test:camera-quality": "electron test/camera-quality-smoke.mjs",
+    "check": "node --check main.js && node --check controller.js && node --check human-recorder.js && node --check webcam.js && node --check microphone.js && node --check webcam-effects.js && node --check voice.js && node --check openrouter.js && node --check secret-store.js && node --check settings.js && node --check worker.js && node --check worker-client.js && node --check window-manager.js && node --check preload.cjs && node --check renderer/app.js && node --check renderer/toolbar.js && node --check renderer/region.js && node --check renderer/camera-effects.js && node --check renderer/capture-overlay.js && node --check renderer/camera-filter.js"
   },
   "devDependencies": {
     "electron": "44.1.1",
@@ -25,6 +29,7 @@
     "node": ">=22.12.0"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^1.0.1",
     "@nut-tree-fork/nut-js": "4.2.6",
     "spessasynth_core": "4.3.16",
     "zod": "4.4.3"
@@ -34,6 +39,7 @@
     "productName": "Auto-Screen",
     "copyright": "Copyright © 2026 Rodrigo Nahum",
     "asar": true,
+    "electronDist": "node_modules/electron/dist",
     "asarUnpack": [
       "node_modules/@nut-tree-fork/libnut*/**/*"
     ],
@@ -50,7 +56,9 @@
       {
         "from": "../../assets",
         "to": "auto-screen-assets",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../../LICENSE",
@@ -60,8 +68,18 @@
     "win": {
       "icon": "build/icon.svg",
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "nsis": {

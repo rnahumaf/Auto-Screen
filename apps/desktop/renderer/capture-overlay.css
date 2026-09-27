@@ -1,0 +1,36 @@
+:root { color-scheme: light; font-family: "Segoe UI", system-ui, sans-serif; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+.capture-edge {
+  position: fixed;
+  inset: 4px;
+  border: 2px solid rgba(238, 70, 85, .72);
+  border-radius: 10px;
+  box-shadow: inset 0 0 12px rgba(238, 70, 85, .20), 0 0 12px 3px rgba(238, 70, 85, .28);
+  pointer-events: none;
+}
+body.is-paused .capture-edge {
+  border-color: rgba(240, 179, 63, .8);
+  box-shadow: inset 0 0 12px rgba(240, 179, 63, .20), 0 0 12px 3px rgba(240, 179, 63, .28);
+}
+.camera-preview {
+  position: fixed;
+  overflow: hidden;
+  background: #16202d;
+  box-shadow: 0 5px 24px rgba(0, 0, 0, .30);
+  pointer-events: none;
+}
+.camera-preview img, .camera-preview canvas { display: block; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.camera-message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  color: #fff;
+  background: rgba(16, 24, 35, .9);
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.35;
+}
+[hidden] { display: none !important; }

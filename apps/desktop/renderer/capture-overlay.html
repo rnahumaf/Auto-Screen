@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; media-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <title>Área em gravação</title>
+  <link rel="stylesheet" href="./capture-overlay.css">
+</head>
+<body>
+  <div id="edge" class="capture-edge" aria-hidden="true"></div>
+  <div id="camera" class="camera-preview" hidden>
+    <img id="cameraImage" alt="Prévia da webcam">
+    <canvas id="cameraCanvas" hidden></canvas>
+    <span id="cameraMessage" class="camera-message" hidden></span>
+  </div>
+  <script type="module" src="./capture-overlay.js"></script>
+</body>
+</html>

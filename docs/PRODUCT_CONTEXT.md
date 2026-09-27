@@ -4,7 +4,7 @@ Auto-Screen existe para um harness de código produzir vídeos de uso de aplicat
 
 ## Estágio atual
 
-A versão `0.1.0` é Windows-first e experimental. Ela executa mouse e teclado autorizados, captura um único display ou recortes físicos por Desktop Duplication a 60 fps e compõe MP4 CFR com direção automática, cursor recomposto, velocidade, legendas e faixas externas. Uma interface humana é distribuída em instalador e executável portátil para Windows x64; a biblioteca continua disponível separadamente para integração via npm.
+A versão `0.3.4` do código é Windows-first e experimental. Ela executa mouse e teclado autorizados, captura um único display ou recortes físicos por Desktop Duplication a 60 fps e compõe MP4 CFR com direção automática, cursor recomposto, velocidade, legendas e faixas externas. A interface humana adiciona webcam e microfone opcionais em segmentos sincronizados, prévia dos filtros antes e durante a captura, compensação de latência do microfone por dispositivo, limpeza local de voz, narração por API com a própria voz gravada como referência padrão, preferências persistentes e salvamento configurável. Um instalador e executável portátil podem ser gerados para Windows x64; a biblioteca continua disponível separadamente para integração via npm.
 
 A captura e a composição são separadas de propósito. Uma interação cara ou frágil pode ser gravada uma vez; legendas, enquadramento e música podem ser ajustados antes que o vídeo bruto seja descartado.
 

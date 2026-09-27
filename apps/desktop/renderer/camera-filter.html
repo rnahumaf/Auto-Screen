@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; media-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <title>Processando webcam</title>
+  <style>html, body { margin: 0; background: #111; } video, canvas { position: absolute; width: 640px; height: 360px; }</style>
+</head>
+<body>
+  <video id="source" muted playsinline preload="auto"></video>
+  <canvas id="output"></canvas>
+  <script type="module" src="./camera-filter.js"></script>
+</body>
+</html>

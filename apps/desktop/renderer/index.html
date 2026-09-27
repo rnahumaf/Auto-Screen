@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' file:; object-src 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; media-src 'self' file:; object-src 'none'; base-uri 'none'">
   <title>Auto-Screen</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
@@ -23,6 +23,13 @@
       <span id="errorMessage"></span>
       <button id="dismissError" class="icon-button" type="button" aria-label="Fechar mensagem">×</button>
     </section>
+
+    <nav id="setupNavigation" class="setup-navigation" aria-label="Ir para configurações">
+      <a href="#setupPanel">Tela</a>
+      <a href="#webcamPanel">Webcam e filtros</a>
+      <a href="#microphonePanel">Voz e OpenRouter</a>
+      <span id="webcamFilterStatus">Filtros da webcam desligados</span>
+    </nav>
 
     <section id="setupPanel" class="panel">
       <div class="section-heading">
@@ -119,6 +126,183 @@
             <option value="hidden">Oculto</option>
           </select>
         </label>
+
+        <label class="option-field">
+          <span>Qualidade do MP4</span>
+          <select id="qualitySelect">
+            <option value="high">Alta qualidade</option>
+            <option value="balanced" selected>Equilibrada</option>
+            <option value="compact">Arquivo menor</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section id="webcamPanel" class="panel compact-panel">
+      <div class="section-heading">
+        <div>
+          <span class="step-number">3</span>
+          <h2>Webcam</h2>
+        </div>
+        <label class="inline-toggle" for="webcamEnabled">
+          <input id="webcamEnabled" type="checkbox">
+          <span>Gravar webcam</span>
+        </label>
+      </div>
+      <div id="webcamDetails">
+        <p id="webcamDisabledHint" class="field-help">Ative Gravar webcam para ajustar o desfoque, o retoque e a posição.</p>
+        <div class="webcam-settings">
+          <label class="option-field webcam-device">
+            <span>Câmera</span>
+            <select id="webcamSelect"><option value="">Procurando câmeras</option></select>
+          </label>
+          <button id="refreshWebcams" class="secondary-button" type="button">Atualizar</button>
+          <div class="webcam-filters">
+            <h3>Filtros da webcam</h3>
+            <p class="field-help">Aumente os valores para ativar. Você também pode ajustá-los depois da captura, antes de salvar.</p>
+            <div class="filter-grid">
+              <label class="option-field">
+                <span>Desfoque do fundo</span>
+                <input id="webcamBackgroundBlur" type="range" min="0" max="100" step="10" value="0">
+                <output id="webcamBackgroundBlurValue">Desligado</output>
+              </label>
+              <label class="option-field">
+                <span>Retoque facial</span>
+                <input id="webcamFaceRetouch" type="range" min="0" max="100" step="10" value="0">
+                <output id="webcamFaceRetouchValue">Desligado</output>
+              </label>
+            </div>
+          </div>
+          <label class="option-field">
+            <span>Tamanho</span>
+            <select id="webcamSizeSelect">
+              <option value="small">Pequeno</option>
+              <option value="medium" selected>Médio</option>
+              <option value="large">Grande</option>
+            </select>
+          </label>
+          <label class="option-field">
+            <span>Formato</span>
+            <select id="webcamShapeSelect">
+              <option value="square" selected>Quadrado</option>
+              <option value="circle">Circular</option>
+            </select>
+          </label>
+          <label class="option-field">
+            <span>Borda</span>
+            <select id="webcamBorderSelect">
+              <option value="none" selected>Sem borda</option>
+              <option value="black">Preta</option>
+              <option value="color">Colorida</option>
+            </select>
+          </label>
+          <label id="webcamBorderColorField" class="option-field" hidden>
+            <span>Cor da borda</span>
+            <input id="webcamBorderColor" type="color" value="#3560c9">
+          </label>
+          <label class="option-field">
+            <span>Posição</span>
+            <select id="webcamPositionSelect">
+              <option value="top-left">Superior esquerdo</option>
+              <option value="top-center">Superior central</option>
+              <option value="top-right">Superior direito</option>
+              <option value="center-left">Meio esquerdo</option>
+              <option value="center">Centro</option>
+              <option value="center-right">Meio direito</option>
+              <option value="bottom-left">Inferior esquerdo</option>
+              <option value="bottom-center">Inferior central</option>
+              <option value="bottom-right" selected>Inferior direito</option>
+            </select>
+          </label>
+        </div>
+        <div class="setup-camera-preview">
+          <div class="setup-camera-preview-heading">
+            <strong>Prévia ao vivo da webcam</strong>
+            <span id="setupCameraStatus" role="status">Ative a webcam para visualizar os filtros.</span>
+            <button id="compareCameraOriginal" class="camera-compare-button" type="button" disabled>Segure para ver o original</button>
+          </div>
+          <canvas id="setupCameraCanvas" width="640" height="360" aria-label="Imagem ao vivo da webcam com os filtros escolhidos"></canvas>
+          <img id="setupCameraImage" alt="" hidden>
+        </div>
+        <div id="webcamLayoutPreview" class="webcam-layout-preview" aria-label="Posição da webcam no vídeo">
+          <span id="webcamLayoutMarker" class="webcam-layout-marker"></span>
+        </div>
+        <p class="field-help">Ajuste os filtros na imagem ao vivo antes de gravar. A posição escolhida aparece no esquema acima e durante a gravação. Os filtros são aplicados ao arquivo depois da captura.</p>
+      </div>
+    </section>
+
+    <section id="microphonePanel" class="panel compact-panel">
+      <div class="section-heading">
+        <div>
+          <span class="step-number">4</span>
+          <h2>Voz</h2>
+        </div>
+        <label class="inline-toggle" for="microphoneEnabled">
+          <input id="microphoneEnabled" type="checkbox">
+          <span>Gravar microfone</span>
+        </label>
+      </div>
+      <div id="microphoneDetails" class="microphone-settings">
+        <label class="option-field microphone-device">
+          <span>Microfone</span>
+          <select id="microphoneSelect"><option value="">Procurando microfones</option></select>
+        </label>
+        <button id="refreshMicrophones" class="secondary-button" type="button">Atualizar</button>
+        <label class="option-field microphone-latency" for="microphoneLatency">
+          <span>Adiantamento do áudio <output id="microphoneLatencyValue">0 ms</output></span>
+          <input id="microphoneLatency" type="range" min="0" max="1000" step="25" value="0">
+          <small>Use para compensar o atraso de microfones Bluetooth. O valor fica salvo para este dispositivo.</small>
+        </label>
+        <div class="voice-setup">
+          <div class="voice-setup-section">
+            <h3>Processamento local da voz</h3>
+            <p class="field-help">O RNNoise usa um modelo local de IA; o filtro espectral usa o FFmpeg. Ambos processam a gravação no próprio computador, após parar.</p>
+            <label class="option-field" for="voiceLocalMethod">
+              <span>Método</span>
+              <select id="voiceLocalMethod">
+                <option value="rnnoise">RNNoise · modelo de IA</option>
+                <option value="spectral">Redução espectral · FFmpeg</option>
+              </select>
+            </label>
+            <label class="option-field" for="voiceStrength">
+              <span>Intensidade da limpeza <output id="voiceStrengthValue">70%</output></span>
+              <input id="voiceStrength" type="range" min="10" max="100" step="5" value="70">
+            </label>
+          </div>
+          <div class="voice-setup-section">
+            <h3>OpenRouter · Seed Audio 1.0</h3>
+            <p class="field-help">Guarde a chave agora. Após gravar, você poderá transcrever ou recriar a narração usando a própria voz da gravação como referência.</p>
+            <div class="voice-key-row">
+              <label class="option-field" for="openRouterKey">
+                <span>Chave OpenRouter</span>
+                <input id="openRouterKey" type="password" autocomplete="off" placeholder="sk-or-…">
+              </label>
+              <button id="saveOpenRouterKey" class="secondary-button" type="button">Guardar chave</button>
+              <button id="removeOpenRouterKey" class="text-button" type="button">Remover</button>
+            </div>
+            <p id="openRouterKeyStatus" class="field-help">Nenhuma chave guardada.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="saveOptionsPanel" class="panel compact-panel">
+      <div class="section-heading">
+        <div>
+          <span class="step-number">5</span>
+          <h2>Salvamento</h2>
+        </div>
+      </div>
+      <div class="save-options">
+        <div class="output-directory">
+          <span class="field-label">Pasta padrão</span>
+          <strong id="outputDirectory">Vídeos</strong>
+          <button id="chooseOutputDirectory" class="secondary-button" type="button">Escolher pasta</button>
+        </div>
+        <label class="inline-toggle" for="autoSave">
+          <input id="autoSave" type="checkbox">
+          <span>Salvar automaticamente após a gravação</span>
+        </label>
       </div>
     </section>
 
@@ -148,13 +332,77 @@
       <div class="result-copy">
         <h2>Gravação concluída</h2>
         <p id="resultDescription">O vídeo temporário está pronto para ser salvo.</p>
+        <p id="audioWarning" class="audio-warning" role="status" hidden></p>
         <div class="result-meta">
           <span id="resultDuration">00:00</span>
           <span id="resultResolution">—</span>
           <span id="resultSegments">1 segmento</span>
         </div>
       </div>
+      <div id="webcamResultPanel" class="result-treatment" hidden>
+        <div class="result-treatment-heading">
+          <h3>Tratamento da webcam</h3>
+          <p>Ajuste os filtros e confira o resultado na prévia antes de salvar.</p>
+        </div>
+        <div class="filter-grid">
+          <label class="option-field" for="resultBackgroundBlur">
+            <span>Desfoque do fundo <output id="resultBackgroundBlurValue">Desligado</output></span>
+            <input id="resultBackgroundBlur" type="range" min="0" max="100" step="10" value="0">
+          </label>
+          <label class="option-field" for="resultFaceRetouch">
+            <span>Retoque facial <output id="resultFaceRetouchValue">Desligado</output></span>
+            <input id="resultFaceRetouch" type="range" min="0" max="100" step="10" value="0">
+          </label>
+        </div>
+        <button id="applyWebcamFilters" class="secondary-button" type="button">Aplicar filtros à gravação</button>
+      </div>
+      <div id="voiceResultPanel" class="voice-result" hidden>
+        <div class="voice-result-heading">
+          <div>
+            <h3>Tratamento da voz</h3>
+            <p id="voiceModeLabel">Áudio original do microfone</p>
+          </div>
+          <button id="originalVoiceButton" class="secondary-button" type="button">Usar original</button>
+        </div>
+        <div class="voice-local-controls">
+          <p>Método e intensidade ajustáveis na seção Voz acima.</p>
+          <button id="processLocalVoice" class="secondary-button" type="button">Aplicar limpeza local</button>
+        </div>
+        <div class="voice-sync-controls">
+          <label class="option-field" for="voiceSyncOffset">
+            <span>Sincronização da voz <output id="voiceSyncValue">0 ms</output></span>
+            <input id="voiceSyncOffset" type="range" min="-1500" max="1500" step="50" value="0">
+          </label>
+          <button id="applyVoiceSync" class="secondary-button" type="button">Atualizar prévia</button>
+          <p class="field-help">Valores negativos adiantam a voz; positivos atrasam. Compare a fala com os movimentos da webcam.</p>
+        </div>
+        <div class="voice-api-controls">
+          <h3>Recriar narração com OpenRouter</h3>
+          <p class="field-help">A chave fica na seção Voz acima. A API transcreve o áudio se você solicitar. Revise o texto antes de gerar a voz com Seed Audio 1.0; a geração pode ter custo.</p>
+          <button id="transcribeVoice" class="secondary-button" type="button">Transcrever gravação pela API</button>
+          <label class="option-field" for="voiceText">
+            <span>Texto da narração (revise antes de gerar)</span>
+            <textarea id="voiceText" rows="4" maxlength="12000" placeholder="Digite ou transcreva a fala gravada"></textarea>
+          </label>
+          <div class="voice-reference-row">
+            <button id="chooseVoiceReference" class="secondary-button" type="button">Escolher outro arquivo</button>
+            <button id="useRecordedVoiceReference" class="secondary-button" type="button">Usar voz gravada</button>
+            <span id="voiceReferenceName">Voz desta gravação</span>
+          </div>
+          <label class="option-field" for="referenceTranscript">
+            <span>Transcrição da amostra (opcional)</span>
+            <input id="referenceTranscript" type="text" maxlength="1000">
+          </label>
+          <label class="inline-toggle" for="voiceConsent">
+            <input id="voiceConsent" type="checkbox">
+            <span>Tenho autorização para usar esta voz como referência na API</span>
+          </label>
+          <button id="generateVoice" class="primary-button" type="button">Gerar nova voz com Seed Audio</button>
+          <p id="voiceApiStatus" class="field-help" role="status"></p>
+        </div>
+      </div>
       <div class="result-actions">
+        <button id="retryPreviewButton" class="secondary-button" type="button" hidden>Reprocessar prévia</button>
         <button id="saveButton" class="primary-button" type="button">Salvar como MP4</button>
         <button id="discardButton" class="secondary-button danger" type="button">Descartar</button>
       </div>

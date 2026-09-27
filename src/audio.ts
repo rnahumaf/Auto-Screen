@@ -128,8 +128,8 @@ export function audioInputArguments(tracks: PreparedAudio[], outputDurationSecon
   return args;
 }
 
-export function audioFilterGraph(tracks: PreparedAudio[], outputDurationSeconds: number): string[] {
-  if (tracks.length === 0) return [`[1:a]atrim=duration=${outputDurationSeconds},asetpts=PTS-STARTPTS[aout]`];
+export function audioFilterGraph(tracks: PreparedAudio[], outputDurationSeconds: number, firstInputIndex = 1): string[] {
+  if (tracks.length === 0) return [`[${firstInputIndex}:a]atrim=duration=${outputDurationSeconds},asetpts=PTS-STARTPTS[aout]`];
   const lines: string[] = [];
   for (let index = 0; index < tracks.length; index += 1) {
     const track = tracks[index] as PreparedAudio;
@@ -147,7 +147,7 @@ export function audioFilterGraph(tracks: PreparedAudio[], outputDurationSeconds:
       "apad",
       `atrim=duration=${outputDurationSeconds}`,
     ];
-    lines.push(`[${index + 1}:a]${filters.join(",")}[a${index}]`);
+    lines.push(`[${index + firstInputIndex}:a]${filters.join(",")}[a${index}]`);
   }
   lines.push(`${tracks.map((_, index) => `[a${index}]`).join("")}amix=inputs=${tracks.length}:duration=longest:normalize=0,loudnorm=I=-23:LRA=7:TP=-1.5,aresample=48000,alimiter=limit=0.95,atrim=duration=${outputDurationSeconds}[aout]`);
   return lines;

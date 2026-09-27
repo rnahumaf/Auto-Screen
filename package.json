@@ -1,6 +1,6 @@
 {
   "name": "@rnaf/auto-screen",
-  "version": "0.1.0",
+  "version": "0.3.4",
   "description": "Gravação e composição de tela sob controle agêntico para Windows.",
   "type": "module",
   "license": "MIT",
@@ -30,6 +30,7 @@
   "files": [
     "dist",
     "assets",
+    "!assets/models/**",
     "README.md",
     "LICENSE"
   ],
@@ -49,10 +50,11 @@
   "scripts": {
     "build": "tsup && tsc --emitDeclarationOnly && node scripts/prepare-desktop-runtime.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test test/core.test.mjs test/human-recorder.test.mjs",
+    "test": "npm run build && node --test test/core.test.mjs test/human-recorder.test.mjs test/voice.test.mjs",
     "check:utf8": "node scripts/check-utf8.mjs",
+    "check:models": "node scripts/verify-models.mjs",
     "app:check": "npm --prefix apps/desktop run check",
-    "check": "npm run check:utf8 && npm run typecheck && npm run app:check && npm test",
+    "check": "npm run check:utf8 && npm run check:models && npm run typecheck && npm run app:check && npm test",
     "doctor": "npm run build && node dist/cli.js doctor",
     "app:install": "npm run app:node && npm --prefix apps/desktop install",
     "app": "npm run app:node && npm --prefix apps/desktop start",
@@ -63,6 +65,7 @@
     "demo": "npm run build && node scripts/run-demo.mjs",
     "test:integration": "npm run build && node scripts/run-integration.mjs",
     "test:capture": "npm run build && node scripts/run-capture-smoke.mjs",
+    "test:webcam": "npm run build && node scripts/run-webcam-smoke.mjs",
     "pack:check": "npm pack --dry-run",
     "prepare": "npm run build",
     "validate:skills": "node scripts/validate-skills.mjs",

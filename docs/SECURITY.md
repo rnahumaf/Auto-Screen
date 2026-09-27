@@ -24,12 +24,16 @@ Em 4 de agosto de 2026, `npm audit` reporta sete entradas moderadas originadas n
 
 ## Rede e artefatos
 
-O runtime não acessa rede. `npm run demo:setup` é um comando explícito de desenvolvimento que baixa GeneralUser GS de um commit fixo e confirma SHA-256 antes de gravar em `output/`, diretório ignorado pelo Git.
+O runtime agêntico não acessa rede. Na interface humana, somente as ações explícitas **Transcrever gravação pela API** e **Gerar nova voz** enviam áudio ou texto ao OpenRouter. A chave fica criptografada com DPAPI do Windows, fora de `settings.json`, e não é devolvida ao renderer. A amostra de referência de voz só é enviada após confirmação de autorização. Erros da API não exibem corpos de resposta que possam conter dados privados. `npm run demo:setup` é um comando explícito de desenvolvimento que baixa GeneralUser GS de um commit fixo e confirma SHA-256 antes de gravar em `output/`, diretório ignorado pelo Git.
 
 ## Distribuição Windows
 
 O Setup e o executável portátil incluem Electron/Node, o JavaScript compilado do Auto-Screen, dependências npm de produção, módulos nativos e o helper PowerShell. FFmpeg, FFprobe e SoundFonts não são incorporados. O aplicativo não baixa esses componentes automaticamente.
 
 O núcleo roda em um `UtilityProcess` separado. O código do aplicativo fica em ASAR e somente módulos nativos que precisam ser carregados pelo sistema operacional são desempacotados. O renderer continua sem acesso direto a Node, filesystem ou processos.
+
+A webcam é enumerada sem abrir o dispositivo. Ao ativá-la, uma sessão de prévia envia quadros JPEG diretamente à interface, sem gravá-los em arquivo; essa sessão termina antes da captura. Durante a gravação, a prévia recebe quadros JPEG do mesmo processo FFmpeg que cria o segmento. Arquivos brutos e filtrados permanecem no projeto temporário, são removidos ao salvar ou descartar e não entram no manifesto final. O aplicativo não transmite imagens pela rede. Os filtros usam MediaPipe local; o modelo RNNoise também é local. Os modelos distribuídos são verificados por SHA-256 antes de empacotar.
+
+O microfone é aberto somente quando ativado. Com webcam, integra a mesma sessão DirectShow para preservar os timestamps relativos; a compensação de latência Bluetooth é salva por identificador de dispositivo. Seu WAV bruto e as versões processadas ficam no projeto temporário até salvar ou descartar. A amostra da própria gravação preparada para referência de voz permanece local até o usuário confirmar a ação de geração pela API. A saída final inclui a faixa selecionada. O indicador de borda e a prévia usam proteção de conteúdo do Electron para ficar fora da gravação da tela.
 
 As releases geram SHA-256 dos executáveis no mesmo runner que os empacota. Ainda não há certificado de assinatura de código configurado; isso é informado ao usuário, e o Windows SmartScreen pode exibir um aviso de reputação. A adoção futura de assinatura deverá usar segredos exclusivos do ambiente de release e nunca armazenar a chave privada no repositório.

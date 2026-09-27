@@ -14,16 +14,24 @@ export function resolveFfprobePath(ffmpegPath: string): string {
 
 export interface MediaProbe {
   durationSeconds: number;
-  streams: Array<{ codecType: string; codecName: string; width?: number; height?: number; sampleRate?: number }>;
+  streams: Array<{ codecType: string; codecName: string; width?: number; height?: number; sampleRate?: number; startTimeSeconds?: number; durationSeconds?: number }>;
+}
+
+function parseDurationTag(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parts = value.split(":");
+  if (parts.length !== 3) return undefined;
+  const duration = Number(parts[0]) * 3600 + Number(parts[1]) * 60 + Number(parts[2]);
+  return Number.isFinite(duration) && duration >= 0 ? duration : undefined;
 }
 
 export async function probeMedia(path: string, ffmpegPath = "ffmpeg"): Promise<MediaProbe> {
   const result = await runProcess(resolveFfprobePath(ffmpegPath), [
-    "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,width,height,sample_rate", "-of", "json", path,
+    "-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,width,height,sample_rate,start_time,duration:stream_tags=DURATION", "-of", "json", path,
   ]);
   const value = JSON.parse(result.stdout) as {
     format?: { duration?: string };
-    streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; sample_rate?: string }>;
+    streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; sample_rate?: string; start_time?: string; duration?: string; tags?: { DURATION?: string } }>;
   };
   return {
     durationSeconds: Number(value.format?.duration ?? 0),
@@ -34,6 +42,12 @@ export async function probeMedia(path: string, ffmpegPath = "ffmpeg"): Promise<M
         ...(stream.width === undefined ? {} : { width: stream.width }),
         ...(stream.height === undefined ? {} : { height: stream.height }),
         ...(stream.sample_rate === undefined ? {} : { sampleRate: Number(stream.sample_rate) }),
+        ...(stream.start_time === undefined || !Number.isFinite(Number(stream.start_time)) ? {} : { startTimeSeconds: Number(stream.start_time) }),
+        ...(() => {
+          const duration = Number(stream.duration ?? NaN);
+          const measured = Number.isFinite(duration) ? duration : parseDurationTag(stream.tags?.DURATION);
+          return measured === undefined ? {} : { durationSeconds: measured };
+        })(),
       };
     }),
   };

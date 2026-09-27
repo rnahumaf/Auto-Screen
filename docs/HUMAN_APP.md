@@ -47,6 +47,38 @@ A sobreposição abre no monitor onde está o cursor. O box pode ser movido e re
 
 A seleção desaparece antes da gravação começar. Posição e dimensões não podem ser alteradas durante a sessão.
 
+## Webcam opcional
+
+A interface enumera câmeras DirectShow sem ativá-las. Ao marcar **Gravar webcam**, abre uma prévia ao vivo na configuração. O usuário vê o desfoque e o retoque enquanto ajusta os controles e pode segurar **Segure para ver o original** para comparar. A prévia é encerrada antes de começar a gravação para liberar o dispositivo. Se a câmera escolhida não estiver disponível, a interface informa o erro antes de esconder a janela principal.
+
+Cada segmento da tela recebe um segmento próprio de webcam. O gravador inicia a câmera antes da tela, registra as origens temporais e encerra ambas ao pausar ou parar. O projeto mantém somente os arquivos temporários necessários para a composição. A prévia e o MP4 final recebem a webcam sobreposta; o manifesto registra o estilo e a quantidade de segmentos, sem registrar o identificador do dispositivo nem caminhos temporários.
+
+Opções da sobreposição:
+
+- tamanho pequeno, médio ou grande;
+- recorte quadrado ou circular;
+- sem borda, borda preta ou borda colorida;
+- posições superior, central ou inferior combinadas com esquerda, centro ou direita.
+- desfoque do fundo e retoque facial, cada um de 0 a 100%.
+
+O microfone é selecionado separadamente. Com ambos ativos, a webcam e o microfone entram na mesma captura DirectShow; somente o vídeo da webcam é composto na imagem final, enquanto o áudio vai para a faixa de voz. O Windows pode negar acesso por suas configurações de privacidade, e uma câmera desconectada durante a sessão causa falha explícita.
+
+Durante a captura, uma janela transparente e protegida cobre a área gravada. Sua borda vermelha suave muda para âmbar na pausa; um recorte da webcam mostra o enquadramento e a posição escolhida. Os quadros chegam do mesmo FFmpeg que grava a câmera, porque outro acesso ao dispositivo pode falhar no Windows. A janela ignora o mouse e fica fora do vídeo pelo mecanismo de proteção de conteúdo do Electron.
+
+Os filtros usam dois modelos locais MediaPipe na prévia anterior, na prévia durante a gravação e no processamento final. SelfieSegmenter separa a pessoa do fundo; se não a identificar, o quadro fica nítido e a prévia avisa que o desfoque foi suspenso. FaceLandmarker delimita o rosto para o retoque, com proteção de olhos, sobrancelhas e boca. Se não identificar o rosto, o retoque é suspenso sem afetar o desfoque. Após parar, o processamento visual reproduz cada segmento em uma janela isolada e grava o resultado temporário antes da composição. Esse passo pode demorar mais que a gravação, conforme o computador. Se falhar, o projeto continua disponível para tentar novamente; salvar com filtros pendentes é bloqueado.
+
+## Microfone e voz
+
+O microfone opcional usa DirectShow. Com webcam ativa, as duas faixas são gravadas no mesmo processo e compartilham os timestamps do contêiner. Sem webcam, o microfone usa um processo próprio. Cada trecho da pausa recebe sua faixa WAV, alinhada com a tela. A prévia e o MP4 final incluem a voz original por padrão. Com microfone ativo, o salvamento automático aguarda a escolha do usuário para permitir pós-processamento.
+
+O alinhamento usa os timestamps de início de cada stream, a duração real de cada arquivo e o relógio da tela. Ao pausar ou parar, a captura conjunta só termina depois que a tela finaliza os seus quadros. Se parte do áudio faltar, o aplicativo preenche o intervalo com silêncio, avisa na tela de resultado e preserva o vídeo. O atraso acústico interno de um microfone Bluetooth exige compensação: antes de gravar, o usuário pode adiantar o áudio entre 0 e 1000 ms em passos de 25 ms, com valor salvo por dispositivo. Depois, pode ajustar a voz em passos de 50 ms na tela de resultado. A chave OpenRouter e a intensidade do modelo local ficam visíveis na seção Voz antes de iniciar; a chave também pode ser configurada depois da captura.
+
+O botão **Aplicar limpeza local** usa o método escolhido: modelo RNNoise pelo filtro `arnndn` ou redução espectral `afftdn` do FFmpeg. Ambos aplicam um filtro passa-altas e compressão leve; a intensidade é ajustável. **Usar original** restaura o WAV capturado. O método espectral é um filtro local, não um segundo modelo de IA.
+
+O fluxo OpenRouter oferece transcrição por `openai/whisper-large-v3`, com tentativa de `openai/whisper-large-v3-turbo` após HTTP 404, texto editável e síntese por `bytedance-seed/seed-audio-1-0`. Esse modelo gera áudio a partir de texto; portanto a voz é recriada, não filtrada diretamente pela API. A referência padrão é um trecho de até 15 segundos da própria voz capturada; o usuário pode substituí-lo por um arquivo WAV, MP3, M4A ou OGG. O envio da amostra exige confirmação de autorização. A síntese é ajustada à duração do vídeo e deve ser conferida na prévia. Nesta versão, cada chamada aceita até 120 segundos e o ajuste de velocidade aceita razão entre 0,25 e 4. Transcrição e síntese exigem ação explícita e podem gerar cobrança na conta OpenRouter.
+
+A chave fica em arquivo separado, criptografado com DPAPI do Windows. A interface não devolve a chave ao renderer. Os modelos locais acompanham o instalador e seus hashes são verificados pelo build.
+
 ### Janela
 
 A interface lista janelas visíveis e preserva o `HWND` apenas no controlador da aplicação. Imediatamente antes de iniciar, a janela é localizada novamente pelo handle e seu `DWMWA_EXTENDED_FRAME_BOUNDS` é convertido em uma captura de região.
@@ -85,7 +117,7 @@ Durante a captura, a janela principal fica escondida e uma barra compacta oferec
 - pausar ou continuar;
 - parar.
 
-A barra usa `setContentProtection(true)` e fica sempre no topo. Ao parar, ela é escondida antes que o último segmento seja finalizado.
+A barra e a prévia usam `setContentProtection(true)` e ficam sempre no topo. Ao parar, ambas são escondidas antes que o último segmento seja finalizado.
 
 ## Cursor
 
@@ -97,9 +129,11 @@ A interface oferece três modos antes de iniciar a gravação:
 
 O modo suavizado continua usando coordenadas físicas do desktop e respeita a mesma câmera fixa da gravação humana. A pausa remove o intervalo correspondente também da trajetória do ponteiro, pois as amostras dos segmentos são deslocadas para a timeline consolidada.
 
-## Salvamento
+## Preferências e salvamento
 
-Depois de parar, o aplicativo produz uma prévia MP4 dentro do diretório temporário e a exibe com controles de reprodução. Essa prévia já contém o enquadramento e o cursor escolhidos, mas não substitui o arquivo final: o projeto permanece disponível para **Salvar como MP4** ou **Descartar**.
+A interface guarda FPS, cursor, qualidade do MP4, configurações da webcam e do microfone, pasta padrão e salvamento automático em `settings.json` no diretório de dados do aplicativo. A pasta é escolhida em diálogo nativo. O modo automático cria um nome com data e hora; no modo manual, o usuário confirma o arquivo no diálogo **Salvar como MP4**. Alta qualidade, equilibrada e arquivo menor alteram a compressão do MP4 final, mantendo a captura intermediária de alta qualidade.
+
+Depois de parar, o aplicativo produz uma prévia MP4 dentro do diretório temporário. Ela já contém o enquadramento, a webcam, o microfone, os filtros e o cursor escolhidos, mas não substitui o arquivo final. Com salvamento automático desligado, o projeto permanece disponível para **Salvar como MP4** ou **Descartar**. Com salvamento automático ligado e microfone desligado, o aplicativo publica o MP4 e o manifesto na pasta padrão após a prévia.
 
 Se a prévia falhar, a captura original continua preservada e o erro é exibido sem descartar o projeto. Ao salvar ou descartar, a prévia temporária é removida junto com os demais intermediários.
 
@@ -110,6 +144,7 @@ O salvamento chama `renderScreenProject()` com:
   width: project.capture.encodedSize.width,
   height: project.capture.encodedSize.height,
   fps: project.capture.requestedFps,
+  quality: "balanced", // ou a preferência escolhida
   camera: [],
   cursor: {
     clickIndicator: false,

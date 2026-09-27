@@ -25,6 +25,21 @@ export interface InputControlOptions {
 
 export type CursorMode = "software" | "native" | "hidden";
 
+export type WebcamPosition =
+  | "top-left" | "top-center" | "top-right"
+  | "center-left" | "center" | "center-right"
+  | "bottom-left" | "bottom-center" | "bottom-right";
+
+export interface WebcamLayout {
+  size: "small" | "medium" | "large";
+  shape: "square" | "circle";
+  border: "none" | "black" | "color";
+  borderColor: string;
+  position: WebcamPosition;
+  backgroundBlur?: number;
+  faceRetouch?: number;
+}
+
 export interface RecorderConfig {
   capture?: CaptureSource;
   captureBackend?: CaptureBackend;
@@ -137,6 +152,7 @@ export interface RenderOptions {
   width?: number;
   height?: number;
   fps?: number;
+  quality?: "high" | "balanced" | "compact";
   ffmpegPath?: string;
   captions?: Caption[];
   camera?: CameraCue[];
@@ -198,6 +214,14 @@ export interface CaptureProject {
     cadence: VideoCadence;
   };
   rawDurationSeconds: number;
+  webcam?: {
+    layout: WebcamLayout;
+    segments: Array<{ path: string; startOffsetSeconds: number; durationSeconds: number }>;
+  };
+  microphone?: {
+    path?: string;
+    segments: Array<{ path: string; startOffsetSeconds: number; durationSeconds: number }>;
+  };
   actions: RecordedAction[];
   pointerPath: PointerSample[];
   marks: TimelineMark[];
@@ -226,7 +250,10 @@ export interface ScreenManifest {
     durationSeconds: number;
     videoCodec: "h264";
     audioCodec: "aac";
+    quality?: "high" | "balanced" | "compact";
   };
+  webcam?: WebcamLayout & { segmentCount: number };
+  microphone?: { segmentCount: number };
   actions: RecordedAction[];
   pointerPath: PointerSample[];
   marks: TimelineMark[];

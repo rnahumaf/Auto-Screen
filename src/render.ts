@@ -10,6 +10,7 @@ import { runProcess } from "./process.js";
 import { cleanupScreenProject } from "./recorder.js";
 import { buildSpeedMap, outputDuration } from "./timeline.js";
 import { validateCaptureProject, validateRenderOptions } from "./validation.js";
+import { buildWebcamFilters } from "./webcam.js";
 import type { CaptureProject, RenderOptions, RenderResult, ScreenManifest } from "./types.js";
 
 function speedFilterGraph(map: ReturnType<typeof buildSpeedMap>): string[] {
@@ -130,15 +131,18 @@ export async function renderScreenProject(projectInput: CaptureProject, optionsI
   );
   graph.push(`[timed]${cameraPlan.filter}[camera]`);
   graph.push(...buildCursorFilters(normalizedProject, speedMap, cameraPlan.frames, width, height, fps, finalDuration, options.cursor, cursorSprite));
-  graph.push(captions.length > 0 ? `[cursorout]ass=filename='${escapeFilterPath(assPath)}'[vout]` : "[cursorout]null[vout]");
-  graph.push(...audioFilterGraph(preparedAudio, finalDuration));
+  graph.push(...buildWebcamFilters(normalizedProject, speedMap, width, height, fps, finalDuration, expectedFrames));
+  graph.push(captions.length > 0 ? `[webcamout]ass=filename='${escapeFilterPath(assPath)}'[vout]` : "[webcamout]null[vout]");
+  graph.push(...audioFilterGraph(preparedAudio, finalDuration, 1 + (project.webcam?.segments.length ?? 0)));
   const graphPath = join(renderDirectory, "filtergraph.txt");
   await writeFile(graphPath, graph.join(";\n"), "utf8");
   const args = [
     "-y", "-hide_banner", "-loglevel", "warning", "-i", project.rawVideoPath,
+    ...(project.webcam?.segments.flatMap((segment) => ["-i", segment.path]) ?? []),
     ...audioInputArguments(preparedAudio, finalDuration),
     "-/filter_complex", graphPath,
-    "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-preset", "medium", "-crf", "17",
+    "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264", "-preset", "medium", "-crf",
+    String({ high: 15, balanced: 17, compact: 22 }[options.quality ?? "balanced"]),
     "-pix_fmt", "yuv420p", "-fps_mode", "cfr", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
     "-t", String(finalDuration), stagingVideoPath,
   ];
@@ -174,7 +178,10 @@ export async function renderScreenProject(projectInput: CaptureProject, optionsI
       output: {
         videoPath, width, height, fps, cadence: outputCadence, durationSeconds: outputProbe.durationSeconds,
         videoCodec: "h264", audioCodec: "aac",
+        quality: options.quality ?? "balanced",
       },
+      ...(project.webcam ? { webcam: { ...project.webcam.layout, segmentCount: project.webcam.segments.length } } : {}),
+      ...(project.microphone ? { microphone: { segmentCount: project.microphone.segments.length } } : {}),
       actions: project.actions,
       pointerPath: project.pointerPath,
       marks: project.marks,

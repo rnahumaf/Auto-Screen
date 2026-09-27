@@ -9,6 +9,8 @@
 4. `buildSpeedMap()` transforma a timeline original numa timeline final contínua.
 5. Cada render cria um diretório exclusivo e gera um filtergraph em arquivo: retiming, CFR exato, câmera, cursor por software, ASS, `amix`, loudness e limiter.
 6. FFmpeg produz um MP4 H.264/AAC temporário; FFprobe valida streams, duração, cadência e contagem exata de quadros. MP4 e manifesto v2 só então recebem os nomes finais.
+   Quando a interface humana ativa a webcam, um processo DirectShow grava cada segmento com origem temporal própria. Se o microfone também estiver ativo, ele entra no mesmo input DirectShow, com timestamps de áudio e vídeo no mesmo contêiner. A composição recorta, alinha e concatena os segmentos antes de aplicar máscara quadrada ou circular, borda e posição sobre a tela. O áudio externo usa os índices de entrada posteriores aos segmentos da webcam.
+   Antes de gravar, uma sessão de prévia abre a câmera sem criar arquivo, envia quadros JPEG ao renderer e libera o dispositivo ao iniciar a captura. Durante a gravação, o próprio processo gravador emite quadros JPEG por `stdout` para a prévia protegida do Electron. SelfieSegmenter separa pessoa e fundo; FaceLandmarker delimita o retoque. A mesma rotina aplica os filtros às duas prévias e aos segmentos em uma janela isolada antes da composição. Com microfone sem webcam, uma sessão DirectShow grava apenas áudio. A montagem WAV alinha os trechos à tela e aplica a compensação de latência escolhida para o dispositivo.
 7. Intermediários são removidos após sucesso, exceto com `keepIntermediates: true`. A limpeza exige prefixo, vídeo bruto e token iguais ao arquivo marcador criado pela sessão; falhas preservam o diretório.
 
 ## Contratos temporais

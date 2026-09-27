@@ -2,7 +2,7 @@
 
 Auto-Screen é uma biblioteca TypeScript experimental para um harness de código gravar interações reais no Windows e transformá-las em vídeos de demonstração. O agente pode mover e clicar o mouse, rolar uma interface e registrar marcas; depois, o mesmo projeto recebe câmera virtual, mudanças de velocidade, legendas e música.
 
-A versão atual é `@rnaf/auto-screen@0.1.0`.
+O código deste checkout está na versão `0.3.4`.
 
 ## O que já funciona
 
@@ -30,7 +30,11 @@ Baixe a versão mais recente em [GitHub Releases](https://github.com/rnahumaf/Au
 - **Setup x64:** instalador assistido, com escolha de pasta e atalhos no Desktop e no menu Iniciar.
 - **Portable x64:** executável autônomo que não precisa ser instalado.
 
+Na compilação 0.3.4 deste checkout, a webcam é opcional. É possível escolher três tamanhos, formato quadrado ou circular, borda ausente, preta ou colorida, nove posições, desfoque do fundo e retoque facial. Uma prévia ao vivo mostra os filtros antes de iniciar e permite comparar com a imagem original; os mesmos ajustes podem ser reaplicados à webcam capturada antes de salvar. Durante a captura, uma borda luminosa indica a área gravada e mostra a câmera no local escolhido. A interface também guarda FPS, cursor, qualidade do MP4, pasta de saída e salvamento automático. Pausar remove os intervalos da tela, webcam e microfone.
+
 O aplicativo já inclui Electron, o runtime do Auto-Screen e suas dependências Node; não é necessário instalar Node.js para usá-lo. FFmpeg e FFprobe continuam sendo requisitos externos e o diagnóstico da tela inicial verifica se estão disponíveis. As compilações públicas atuais não possuem assinatura de código comercial, portanto o Windows SmartScreen pode pedir confirmação. Compare o arquivo baixado com `SHA256SUMS.txt` publicado na mesma release.
+
+O aplicativo grava um microfone opcional. Quando webcam e microfone estão ativos, ambos são capturados no mesmo processo com timestamps compartilhados. Para microfones Bluetooth, o usuário pode salvar um adiantamento do áudio por dispositivo antes de gravar. Depois da captura, é possível manter a voz original, reduzir ruído com RNNoise ou filtro espectral local, ajustar a sincronia em passos de 50 ms, ou transcrever e recriar a narração com OpenRouter. A transcrição tenta Whisper Large V3 e, em caso de HTTP 404, Whisper Large V3 Turbo. A geração usa `bytedance-seed/seed-audio-1-0` e usa a própria voz gravada como referência padrão, após confirmação de autorização. A chave da API é protegida pelo Windows; áudio e texto só são enviados por ação explícita. O aplicativo não grava áudio do sistema.
 
 ### Biblioteca npm
 
@@ -57,6 +61,10 @@ npm run desktop:dist
 ```
 
 Os artefatos são criados em `release/`. Uma tag `v*` também aciona a validação, o empacotamento para Windows e a publicação automática da GitHub Release.
+
+Para conferir a integração real entre webcam, tela e microfone em uma janela de teste controlada, execute `npm run test:webcam -- --allow-webcam --allow-microphone`. O teste abre os dispositivos e descarta os arquivos temporários ao terminar. `npm --prefix apps/desktop run test:setup-preview` verifica a prévia com filtros antes da captura; `test:live-overlay` verifica a prévia durante a captura; `test:effects` verifica o processamento do arquivo com vídeo sintético.
+
+Para conferir os filtros sem ocupar a webcam, baixe explicitamente o [retrato de exemplo do MediaPipe](https://developers.google.com/static/mediapipe/images/solutions/examples/image_segmentation.png) e passe o arquivo a `test:camera-quality -- --sample-image`, `test:setup-preview -- --fixture-image` e `test:live-overlay -- --fixture-image`. Os testes verificam SHA-256 `f244712571dbf91857847d0b60185323fa2270f5ed26eb642127ccac81e99bbc` antes de usar a imagem. O primeiro compara nitidez de rosto, fundo, olhos e boca; o segundo testa também o canvas já dimensionado antes de os modelos abrirem.
 
 Defina `AUTO_SCREEN_FFMPEG_PATH` ou passe `ffmpegPath` quando o executável não estiver no `PATH`.
 
@@ -190,7 +198,7 @@ No Windows, `auto-screen.cmd` reúne essas ações em um menu.
 
 ## Segurança e limitações
 
-- A API não captura microfone nem grava o áudio do sistema nesta versão.
+- A API agêntica não captura microfone nem grava o áudio do sistema nesta versão; o microfone pertence à interface humana.
 - Antes de digitar, a janela ativa é conferida pelo provedor nativo e seu HWND precisa coincidir com o alvo estável autorizado no início.
 - Texto Unicode usa a entrada nativa e não lê nem altera o clipboard.
 - `Ctrl+C`/`AbortSignal`, região permitida e limite de 300 segundos reduzem o risco, mas um harness continua responsável por revisar o alvo antes de habilitar cliques.

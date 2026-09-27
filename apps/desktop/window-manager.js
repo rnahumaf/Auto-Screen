@@ -1,5 +1,8 @@
 import { BrowserWindow, screen } from "electron";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { randomUUID } from "node:crypto";
+import { open, rm } from "node:fs/promises";
 
 const MIN_REGION_WIDTH = 160;
 const MIN_REGION_HEIGHT = 90;
@@ -12,11 +15,24 @@ export class WindowManager {
     this.preloadPath = preloadPath;
     this.mainWindow = undefined;
     this.toolbarWindow = undefined;
+    this.captureOverlay = undefined;
+    this.lastOverlayFrameAt = 0;
+    this.lastSetupFrameAt = 0;
+    this.effectsJob = undefined;
     this.selectorRequest = undefined;
   }
 
   rendererFile(name) {
     return join(this.baseDirectory, "renderer", name);
+  }
+
+  cameraModelUrls() {
+    const root = process.env.AUTO_SCREEN_ASSETS_DIR;
+    if (!root) throw new Error("Os modelos visuais da webcam não foram encontrados.");
+    return {
+      person: pathToFileURL(join(root, "models", "selfie-segmenter.tflite")).href,
+      face: pathToFileURL(join(root, "models", "face-landmarker.task")).href,
+    };
   }
 
   createMainWindow(onClose) {
@@ -114,6 +130,13 @@ export class WindowManager {
     }
   }
 
+  sendSetupCameraFrame(frame) {
+    const window = this.mainWindow;
+    if (!window || window.isDestroyed() || !window.isVisible() || !frame?.jpeg || frame.at <= this.lastSetupFrameAt) return;
+    this.lastSetupFrameAt = frame.at;
+    window.webContents.send("setup-camera:frame", frame.jpeg);
+  }
+
   hideMain() {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) this.mainWindow.hide();
   }
@@ -126,6 +149,134 @@ export class WindowManager {
 
   hideToolbar() {
     if (this.toolbarWindow && !this.toolbarWindow.isDestroyed()) this.toolbarWindow.hide();
+  }
+
+  async showCaptureOverlay(selectionBounds, webcam) {
+    this.hideCaptureOverlay();
+    const bounds = screen.screenToDipRect(null, selectionBounds);
+    const window = new BrowserWindow({
+      ...bounds,
+      show: false,
+      frame: false,
+      thickFrame: false,
+      transparent: true,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      focusable: false,
+      backgroundColor: "#00000000",
+      title: "Indicador de gravação do Auto-Screen",
+      webPreferences: {
+        preload: this.preloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        backgroundThrottling: false,
+      },
+    });
+    this.captureOverlay = window;
+    this.lastOverlayFrameAt = 0;
+    window.setContentProtection(true);
+    window.setIgnoreMouseEvents(true, { forward: true });
+    window.setAlwaysOnTop(true, "screen-saver");
+    window.on("closed", () => {
+      if (this.captureOverlay === window) this.captureOverlay = undefined;
+    });
+    await window.loadFile(this.rendererFile("capture-overlay.html"));
+    window.webContents.send("overlay:configure", {
+      webcam,
+      ...(webcam?.backgroundBlur || webcam?.faceRetouch ? { modelUrls: this.cameraModelUrls() } : {}),
+    });
+    window.showInactive();
+    return window;
+  }
+
+  setCaptureOverlayPaused(paused) {
+    const window = this.captureOverlay;
+    if (window && !window.isDestroyed()) window.webContents.send("overlay:paused", paused);
+  }
+
+  sendCameraFrame(frame) {
+    const window = this.captureOverlay;
+    if (!window || window.isDestroyed() || !frame?.jpeg || frame.at <= this.lastOverlayFrameAt) return;
+    this.lastOverlayFrameAt = frame.at;
+    window.webContents.send("overlay:frame", frame.jpeg);
+  }
+
+  hideCaptureOverlay() {
+    const window = this.captureOverlay;
+    this.captureOverlay = undefined;
+    if (window && !window.isDestroyed()) window.destroy();
+  }
+
+  async appendWebcamEffectsChunk(sender, token, bytes) {
+    const job = this.effectsJob;
+    if (!job || sender !== job.window.webContents || token !== job.token || !(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length > 8_000_000) {
+      throw new Error("Trecho do filtro da webcam inválido.");
+    }
+    await job.file.writeFile(bytes);
+    job.bytes += bytes.length;
+    return true;
+  }
+
+  async completeWebcamEffects(sender, token, error) {
+    const job = this.effectsJob;
+    if (!job || sender !== job.window.webContents || token !== job.token) throw new Error("Processamento da webcam inválido.");
+    if (error) job.reject(new Error(`Falha no filtro da webcam: ${String(error).slice(0, 1_000)}`));
+    else if (job.bytes === 0) job.reject(new Error("O filtro da webcam não produziu vídeo."));
+    else job.resolve();
+    return true;
+  }
+
+  async processWebcamSegment(source, filters) {
+    if (this.effectsJob) throw new Error("Já existe um filtro da webcam em andamento.");
+    const window = new BrowserWindow({
+      width: 640, height: 360, show: false, skipTaskbar: true,
+      backgroundColor: "#111111",
+      webPreferences: {
+        preload: this.preloadPath, contextIsolation: true, nodeIntegration: false,
+        sandbox: true, backgroundThrottling: false,
+      },
+    });
+    window.setContentProtection(true);
+    const file = await open(source.output, "w");
+    let timeout;
+    let done = false;
+    let failed = false;
+    const completed = new Promise((resolvePromise, rejectPromise) => {
+      this.effectsJob = {
+        window, file, token: randomUUID(), bytes: 0,
+        resolve: () => { if (!done) { done = true; resolvePromise(); } },
+        reject: (error) => { if (!done) { done = true; rejectPromise(error); } },
+      };
+    });
+    window.on("closed", () => this.effectsJob?.window === window && this.effectsJob.reject(new Error("A janela do filtro da webcam foi encerrada.")));
+    try {
+      await window.loadFile(this.rendererFile("camera-filter.html"));
+      const job = this.effectsJob;
+      window.webContents.send("webcam-effects:configure", {
+        token: job.token,
+        sourceUrl: pathToFileURL(source.input).href,
+        filters,
+        modelUrls: this.cameraModelUrls(),
+      });
+      timeout = setTimeout(() => job.reject(new Error("O processamento da webcam excedeu o tempo esperado.")), Math.max(90_000, (source.durationSeconds * 2 + 60) * 1_000));
+      await completed;
+      return source.output;
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      this.effectsJob = undefined;
+      await file.close();
+      if (!window.isDestroyed()) window.destroy();
+      if (failed) await rm(source.output, { force: true });
+    }
   }
 
   async chooseRegion() {

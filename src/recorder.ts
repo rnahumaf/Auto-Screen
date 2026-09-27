@@ -96,6 +96,7 @@ export class ScreenRecorderSession {
   private maxTimer?: NodeJS.Timeout;
   private sampling = false;
   private stopped = false;
+  private stopRequestedAt = 0;
   private abortedReason?: Error;
   private firstFrameDelayMs = 0;
   private duplicatedFrames = 0;
@@ -110,9 +111,12 @@ export class ScreenRecorderSession {
     this.config = validateRecorderConfig(config);
   }
 
+  get timelineEpochMilliseconds(): number { return this.startedAt; }
+  get timelineStopMilliseconds(): number { return this.stopRequestedAt; }
+
   async start(): Promise<this> {
     if (this.process) throw new Error("A sessão já foi iniciada.");
-    if (process.platform !== "win32") throw new Error("Auto-Screen 0.1.0 grava somente no Windows.");
+    if (process.platform !== "win32") throw new Error("Auto-Screen grava somente no Windows.");
     if (this.config.abortSignal?.aborted) throw new Error("A sessão foi cancelada antes de iniciar.");
     const source = this.config.capture ?? { kind: "display" as const };
     const resolvedCapture = await resolveCaptureBounds(source);
@@ -387,6 +391,7 @@ export class ScreenRecorderSession {
     if (!this.config.observePointerButtons) await this.samplePointer();
     this.stopped = true;
     if (this.abortListener) this.config.abortSignal?.removeEventListener("abort", this.abortListener);
+    this.stopRequestedAt = performance.now();
     if (this.process.exitCode === null && !this.process.killed) this.process.stdin.write("q\n");
     const exit = await this.processExit;
     if (exit.code !== 0 && !this.abortedReason) throw new Error(`A captura falhou: ${exit.stderr.trim()}`);
