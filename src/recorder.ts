@@ -96,6 +96,7 @@ export class ScreenRecorderSession {
   private maxTimer?: NodeJS.Timeout;
   private sampling = false;
   private stopped = false;
+  private limitReached = false;
   private stopRequestedAt = 0;
   private abortedReason?: Error;
   private firstFrameDelayMs = 0;
@@ -113,6 +114,8 @@ export class ScreenRecorderSession {
 
   get timelineEpochMilliseconds(): number { return this.startedAt; }
   get timelineStopMilliseconds(): number { return this.stopRequestedAt; }
+  get durationLimitReached(): boolean { return this.limitReached; }
+  get recoveryDirectory(): string { return this.workDirectory; }
 
   async start(): Promise<this> {
     if (this.process) throw new Error("A sessão já foi iniciada.");
@@ -182,6 +185,8 @@ export class ScreenRecorderSession {
     }
     const processStartedAt = performance.now();
     this.process = spawnProcess(ffmpeg, args);
+    // O FFmpeg pode fechar stdin entre o limite e Parar; a saída do processo e o probe validam a captura.
+    this.process.stdin.on("error", () => undefined);
     let stderr = "";
     let progressBuffer = "";
     let progress: Record<string, string> = {};
@@ -262,7 +267,20 @@ export class ScreenRecorderSession {
     }
     const elapsedMs = Math.max(0, performance.now() - this.startedAt);
     this.maxTimer = setTimeout(
-      () => this.abort(new Error("A sessão atingiu a duração máxima configurada.")),
+      () => {
+        if (this.config.durationLimitAction !== "stop") {
+          this.abort(new Error("A sessão atingiu a duração máxima configurada."));
+          return;
+        }
+        this.limitReached = true;
+        this.stopRequestedAt = performance.now();
+        if (this.pointerTimer) clearInterval(this.pointerTimer);
+        if (this.pointerButtonMonitor) void this.pointerButtonMonitor.stop().catch(() => undefined);
+        if (this.process?.exitCode === null && this.process.stdin.writable) this.process.stdin.write("q\n");
+        setTimeout(() => {
+          if (this.process?.exitCode === null) this.process.kill();
+        }, 1_500).unref();
+      },
       Math.max(1, (this.config.maxDurationSeconds ?? DEFAULT_MAX_DURATION_SECONDS) * 1_000 - elapsedMs),
     );
     this.abortListener = () => this.abort(new Error("A sessão foi cancelada."));
@@ -391,8 +409,8 @@ export class ScreenRecorderSession {
     if (!this.config.observePointerButtons) await this.samplePointer();
     this.stopped = true;
     if (this.abortListener) this.config.abortSignal?.removeEventListener("abort", this.abortListener);
-    this.stopRequestedAt = performance.now();
-    if (this.process.exitCode === null && !this.process.killed) this.process.stdin.write("q\n");
+    this.stopRequestedAt ||= performance.now();
+    if (this.process.exitCode === null && !this.process.killed && this.process.stdin.writable) this.process.stdin.write("q\n");
     const exit = await this.processExit;
     if (exit.code !== 0 && !this.abortedReason) throw new Error(`A captura falhou: ${exit.stderr.trim()}`);
     if (this.abortedReason) throw this.abortedReason;
@@ -458,7 +476,7 @@ export class ScreenRecorderSession {
   }
 
   private async samplePointer(): Promise<void> {
-    if (!this.process || this.stopped || this.sampling || this.startedAt === 0) return;
+    if (!this.process || this.stopped || this.limitReached || this.sampling || this.startedAt === 0) return;
     this.sampling = true;
     try {
       const point = inputToPhysicalPoint(await mouse.getPosition(), this.dpi);
@@ -542,7 +560,7 @@ export class ScreenRecorderSession {
 
   private assertUsable(): void {
     if (!this.process || this.startedAt === 0) throw new Error("A sessão ainda não foi iniciada.");
-    if (this.stopped || this.abortedReason) throw this.abortedReason ?? new Error("A sessão já foi encerrada.");
+    if (this.stopped || this.limitReached || this.abortedReason) throw this.abortedReason ?? new Error("A sessão já foi encerrada.");
   }
 
   private assertControl(point: Point): void {

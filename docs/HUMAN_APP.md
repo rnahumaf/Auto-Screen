@@ -166,3 +166,13 @@ Isso preserva o enquadramento estático e aplica a apresentação de cursor esco
 - O modo humano nunca habilita `inputControl`; mouse e teclado são operados diretamente pela pessoa.
 - No cursor suavizado, um observador Win32 passivo registra posição e mudanças dos botões esquerdo, direito e central em pixels físicos. Ele não envia entrada e não depende das permissões de controle agêntico.
 - O diálogo nativo define o caminho de saída.
+
+## Limite, falhas e descarte
+
+A gravação humana encerra normalmente ao atingir uma hora de tempo ativo. A barra avisa nos últimos 60 segundos; o motor encerra a captura no limite e a interface prepara a prévia para salvar. O intervalo pausado continua excluído. A biblioteca mantém o cancelamento por limite como padrão; a interface solicita `durationLimitAction: "stop"` para permitir a finalização normal.
+
+Falhas ao finalizar não autorizam apagar a gravação. A consolidação trabalha com cópias dos segmentos e conserva os originais até concluir também a montagem do microfone. Quando esses passos falham, a tela oferece **Tentar finalizar novamente** e **Abrir arquivos preservados**. Falhas no próprio trecho podem exigir recuperação manual dos arquivos; o aplicativo não reabre automaticamente projetos de uma execução anterior.
+
+O botão **Descartar** abre uma confirmação com a duração da gravação. **Manter gravação** é a opção padrão e também a ação de Escape. A exclusão só ocorre ao confirmar **Descartar gravação**.
+
+Encerrar o aplicativo com trabalho pendente preserva os arquivos temporários. O pedido de encerramento não espera na fila de codificação: cancela a renderização e tenta parar os dispositivos, com até cinco segundos para resposta e até três segundos adicionais para encerrar a árvore de processos no Windows. As chamadas normais também têm prazo: dez segundos para estado, dois minutos para operações curtas e seis horas para finalização e processamento de mídia. Um timeout bloqueia novas operações até reiniciar o aplicativo e mantém os arquivos para recuperação. Os temporários preservados ocupam espaço até serem recuperados ou removidos pelo usuário.

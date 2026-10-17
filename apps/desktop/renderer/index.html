@@ -314,11 +314,20 @@
       <p id="startHint">Conclua a verificação do ambiente para começar.</p>
     </section>
 
+    <section id="recoveryPanel" class="panel" hidden aria-labelledby="recoveryTitle">
+      <h2 id="recoveryTitle">A gravação precisa de atenção</h2>
+      <p id="recoveryDescription" role="status"></p>
+      <div class="result-actions">
+        <button id="retryStopButton" class="primary-button" type="button">Tentar finalizar novamente</button>
+        <button id="openRecoveryButton" class="secondary-button" type="button">Abrir arquivos preservados</button>
+      </div>
+    </section>
+
     <section id="previewingPanel" class="panel saving-panel" hidden>
       <div class="spinner" aria-hidden="true"></div>
       <div>
-        <h2>Preparando a prévia</h2>
-        <p>Aplicando o cursor escolhido e codificando uma visualização local.</p>
+        <h2 id="processingTitle">Preparando a prévia</h2>
+        <p id="processingDescription">Aplicando o cursor escolhido e codificando uma visualização local.</p>
       </div>
     </section>
 

@@ -6,6 +6,7 @@ function invoke(channel, ...args) {
 
 contextBridge.exposeInMainWorld("autoScreen", {
   getState: () => invoke("app:get-state"),
+  requestQuit: () => invoke("app:request-quit"),
   bootstrap: () => invoke("app:bootstrap"),
   refreshDoctor: () => invoke("app:refresh-doctor"),
   listDisplays: () => invoke("app:list-displays"),
@@ -26,6 +27,7 @@ contextBridge.exposeInMainWorld("autoScreen", {
   saveRecording: () => invoke("recording:save"),
   discardRecording: () => invoke("recording:discard"),
   openOutput: () => invoke("recording:open-output"),
+  openRecovery: () => invoke("recording:open-recovery"),
   storeOpenRouterKey: (value) => invoke("voice:store-key", value),
   removeOpenRouterKey: () => invoke("voice:remove-key"),
   chooseVoiceReference: () => invoke("voice:choose-reference"),

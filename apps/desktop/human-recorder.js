@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { basename, join, resolve } from "node:path";
-import { rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, rename, rm, writeFile } from "node:fs/promises";
 import { WebcamRecorderSession } from "./webcam.js";
 import { MicrophoneRecorderSession } from "./microphone.js";
 import {
@@ -100,13 +100,13 @@ async function consolidateProjects(projects, ffmpegPath) {
 
   const base = projects[0];
   const workDirectory = resolve(base.workDirectory);
-  const rawVideoPath = join(workDirectory, "capture.mkv");
+  const rawVideoPath = join(workDirectory, "capture-consolidated.mkv");
   const segmentPaths = [];
 
   for (const [index, project] of projects.entries()) {
     const destination = join(workDirectory, `capture-segment-${String(index + 1).padStart(4, "0")}.mkv`);
     await rm(destination, { force: true });
-    await rename(resolve(project.rawVideoPath), destination);
+    await copyFile(resolve(project.rawVideoPath), destination);
     segmentPaths.push(destination);
   }
 
@@ -157,7 +157,7 @@ async function consolidateProjects(projects, ffmpegPath) {
     for (const [index, project] of projects.entries()) {
       const segment = project.webcam.segments[0];
       const destination = join(workDirectory, `webcam-segment-${String(index + 1).padStart(4, "0")}.mkv`);
-      await rename(resolve(segment.path), destination);
+      await copyFile(resolve(segment.path), destination);
       webcamSegments.push({ ...segment, path: destination });
     }
   }
@@ -168,7 +168,7 @@ async function consolidateProjects(projects, ffmpegPath) {
     for (const [index, project] of projects.entries()) {
       const segment = project.microphone.segments[0];
       const destination = join(workDirectory, `microphone-segment-${String(index + 1).padStart(4, "0")}.wav`);
-      await rename(resolve(segment.path), destination);
+      await copyFile(resolve(segment.path), destination);
       microphoneSegments.push({ ...segment, path: destination });
     }
   }
@@ -178,14 +178,6 @@ async function consolidateProjects(projects, ffmpegPath) {
       ? `${projects.length} segmentos foram consolidados sem recodificação.`
       : `${projects.length} segmentos foram consolidados com recodificação H.264 de compatibilidade.`,
   );
-
-  for (const project of projects.slice(1)) {
-    try {
-      await cleanupScreenProject(project);
-    } catch (error) {
-      warnings.push(`Não foi possível remover um diretório de segmento: ${messageOf(error)}`);
-    }
-  }
 
   await Promise.all([
     rm(concatPath, { force: true }),
@@ -258,16 +250,31 @@ export class HumanRecorderSession {
     this.completedSeconds = 0;
     this.segmentProjects = [];
     this.finalProject = undefined;
+    this.currentProject = undefined;
     this._state = "idle";
     this._segmentCount = 0;
+    this.limitReached = false;
   }
 
   get state() { return this._state; }
+  get durationLimitReached() { return this.limitReached || this.currentRecorder?.durationLimitReached === true; }
+  get canRetryStop() { return Boolean(this.finalProject || (!this.currentRecorder && this.segmentProjects.length)); }
+  get recoveryDirectories() {
+    return [...new Set([
+      this.finalProject?.workDirectory,
+      this.currentProject?.workDirectory,
+      ...this.segmentProjects.map((project) => project.workDirectory),
+      this.currentRecorder?.recoveryDirectory,
+      this.currentWebcam?.workDirectory,
+      this.currentMicrophone?.directory,
+    ].filter(Boolean))];
+  }
   get previewFrame() { return this.currentWebcam?.previewFrame ?? null; }
   get segmentCount() { return this._segmentCount || this.segmentProjects.length; }
   get elapsedSeconds() {
     if (["recording", "pausing", "stopping"].includes(this._state) && this.currentStartedAt > 0) {
-      return this.completedSeconds + Math.max(0, (performance.now() - this.currentStartedAt) / 1_000);
+      const end = this.currentRecorder?.timelineStopMilliseconds || performance.now();
+      return this.completedSeconds + Math.max(0, (end - this.currentStartedAt) / 1_000);
     }
     return this.completedSeconds;
   }
@@ -296,26 +303,16 @@ export class HumanRecorderSession {
     }
     if (this.microphoneConfig && !this.webcamConfig) {
       this.currentMicrophone = this.createMicrophone({ deviceId: this.microphoneConfig.deviceId, ffmpegPath: this.ffmpegPath });
-      try { await this.currentMicrophone.start(); }
-      catch (error) {
-        await this.currentWebcam?.cleanup();
-        this.currentWebcam = undefined;
-        throw error;
-      }
+      await this.currentMicrophone.start();
     }
     const recorder = this.createRecorder({
       ...this.config,
       maxDurationSeconds: this.remainingDuration(),
+      durationLimitAction: "stop",
     });
     this.currentRecorder = recorder;
-    try { await recorder.start(); }
-    catch (error) {
-      await this.currentWebcam?.cleanup();
-      await this.currentMicrophone?.cleanup();
-      this.currentWebcam = undefined;
-      this.currentMicrophone = undefined;
-      throw error;
-    }
+    this.currentProject = undefined;
+    await recorder.start();
     this.currentStartedAt = performance.now();
   }
 
@@ -326,13 +323,13 @@ export class HumanRecorderSession {
     const microphone = this.currentMicrophone;
     // A captura de áudio continua até o encerramento da tela para não perder os últimos quadros.
     const [screenResult] = await Promise.allSettled([Promise.resolve().then(() => recorder.stop())]);
+    this.limitReached ||= recorder.durationLimitReached === true;
+    if (screenResult.status === "fulfilled") this.currentProject = screenResult.value;
     const [webcamResult, microphoneResult] = await Promise.allSettled([
       webcam ? webcam.stop() : Promise.resolve(undefined),
       microphone ? microphone.stop() : Promise.resolve(undefined),
     ]);
     if (screenResult.status === "rejected" || webcamResult.status === "rejected" || microphoneResult.status === "rejected") {
-      await webcam?.cleanup();
-      await microphone?.cleanup();
       throw screenResult.status === "rejected" ? screenResult.reason : webcamResult.status === "rejected" ? webcamResult.reason : microphoneResult.reason;
     }
     const project = screenResult.value;
@@ -347,7 +344,6 @@ export class HumanRecorderSession {
       const startOffsetSeconds = offsetFor(webcamResult.value);
       const missingCameraSeconds = project.rawDurationSeconds + startOffsetSeconds - webcamResult.value.durationSeconds;
       if (missingCameraSeconds > 1) {
-        await webcam.cleanup();
         throw new Error("A webcam parou antes da tela. Verifique a conexão da câmera e grave novamente.");
       }
       const destination = join(project.workDirectory, "webcam.mkv");
@@ -373,7 +369,6 @@ export class HumanRecorderSession {
       ? webcamResult.value?.microphone
       : microphoneResult.value;
     if (this.microphoneConfig && !microphoneMedia) {
-      await webcam?.cleanup();
       throw new Error("A captura conjunta não gerou áudio do microfone.");
     }
     if (microphoneMedia) {
@@ -396,9 +391,12 @@ export class HumanRecorderSession {
         }],
       };
     }
-    await webcam?.cleanup();
-    await microphone?.cleanup();
+    for (const media of [webcam, microphone]) {
+      try { await media?.cleanup(); }
+      catch (error) { project.warnings.push(`Não foi possível remover uma pasta de mídia: ${messageOf(error)}`); }
+    }
     this.currentRecorder = undefined;
+    this.currentProject = undefined;
     this.currentWebcam = undefined;
     this.currentMicrophone = undefined;
     this.currentStartedAt = 0;
@@ -447,15 +445,21 @@ export class HumanRecorderSession {
   }
 
   async stop() {
-    this.assertState(["recording", "paused"]);
+    this.assertState(["recording", "paused", "failed"]);
+    if (this._state === "failed" && !this.canRetryStop) throw new Error("Os arquivos foram preservados, mas este trecho exige recuperação manual.");
     const wasRecording = this._state === "recording";
     this._state = "stopping";
     try {
       if (wasRecording) await this.closeSegment();
       if (this.segmentProjects.length === 0) throw new Error("Nenhum segmento válido foi gravado.");
       this._segmentCount = this.segmentProjects.length;
-      this.finalProject = await this.consolidate(this.segmentProjects, this.ffmpegPath);
+      this.finalProject ??= await this.consolidate(this.segmentProjects, this.ffmpegPath);
       this.finalProject = await assembleMicrophone(this.finalProject, this.ffmpegPath);
+      for (const project of this.segmentProjects) {
+        if (project.workDirectory === this.finalProject.workDirectory) continue;
+        try { await cleanupScreenProject(project); }
+        catch (error) { this.finalProject.warnings.push(`Não foi possível remover um diretório de segmento: ${messageOf(error)}`); }
+      }
       this.completedSeconds = this.finalProject.rawDurationSeconds;
       this._state = "stopped";
       return this.finalProject;
@@ -463,6 +467,17 @@ export class HumanRecorderSession {
       this._state = "failed";
       throw error;
     }
+  }
+
+  // Falhas e encerramento param os dispositivos sem autorizar a exclusão da mídia capturada.
+  async preserve() {
+    this._state = "failed";
+    await Promise.allSettled([
+      this.currentRecorder?.stop(),
+      this.currentWebcam?.stop(),
+      this.currentMicrophone?.stop(),
+    ]);
+    return this.recoveryDirectories;
   }
 
   async cleanup() {
@@ -474,7 +489,8 @@ export class HumanRecorderSession {
       try { await this.currentMicrophone.cleanup(); } catch { /* melhor esforço */ }
       this.currentMicrophone = undefined;
     }
-    const projects = [];
+    const projects = [...this.segmentProjects];
+    if (this.currentProject) projects.push(this.currentProject);
     if (this.finalProject) {
       projects.push(this.finalProject);
     } else {
@@ -486,7 +502,6 @@ export class HumanRecorderSession {
         }
         this.currentRecorder = undefined;
       }
-      projects.push(...this.segmentProjects);
     }
 
     const seen = new Set();

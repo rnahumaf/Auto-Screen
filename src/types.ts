@@ -49,6 +49,8 @@ export interface RecorderConfig {
   ffmpegPath?: string;
   tempDirectory?: string;
   maxDurationSeconds?: number;
+  /** Gravações humanas podem finalizar no limite; roteiros cancelam por padrão. */
+  durationLimitAction?: "abort" | "stop";
   inputControl?: InputControlOptions;
   abortSignal?: AbortSignal;
 }

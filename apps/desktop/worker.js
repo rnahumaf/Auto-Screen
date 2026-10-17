@@ -33,6 +33,8 @@ class RecorderWorker {
     this.voiceRevision = 0;
     this.webcamEffectsPending = false;
     this.webcamRawPaths = [];
+    this.abortController = new AbortController();
+    this.shuttingDown = false;
   }
 
   status() {
@@ -48,6 +50,10 @@ class RecorderWorker {
               ? "captured"
               : "idle",
       elapsedSeconds: this.session?.elapsedSeconds ?? project?.rawDurationSeconds ?? 0,
+      durationLimitReached: this.session?.durationLimitReached ?? false,
+      remainingSeconds: this.session ? Math.max(0, 3_600 - this.session.elapsedSeconds) : null,
+      canRetryStop: this.session?.state === "failed" && this.session.canRetryStop,
+      recoveryDirectories: this.session?.recoveryDirectories ?? (project ? [project.workDirectory] : []),
       previewFrame: this.session?.previewFrame ?? null,
       segmentCount: this.session?.segmentCount ?? this.segmentCount,
       previewPath: this.previewPath ?? null,
@@ -107,20 +113,21 @@ class RecorderWorker {
       await this.session.start();
       return this.status();
     } catch (error) {
-      const failedSession = this.session;
-      this.session = undefined;
-      this.semanticSource = undefined;
-      this.windowMetadata = undefined;
-      try { await failedSession?.cleanup(); } catch { /* melhor esforço */ }
+      await this.session?.preserve();
       throw error;
     }
   }
 
   async pauseOrResume() {
     if (!this.session) throw new Error("Não há gravação em andamento.");
-    if (this.session.state === "recording") await this.session.pause();
-    else if (this.session.state === "paused") await this.session.resume();
-    else throw new Error(`A gravação não pode alternar pausa no estado ${this.session.state}.`);
+    try {
+      if (this.session.state === "recording") await this.session.pause();
+      else if (this.session.state === "paused") await this.session.resume();
+      else throw new Error(`A gravação não pode alternar pausa no estado ${this.session.state}.`);
+    } catch (error) {
+      await this.session.preserve();
+      throw error;
+    }
     return this.status();
   }
 
@@ -141,10 +148,7 @@ class RecorderWorker {
       this.windowMetadata = undefined;
       return this.status();
     } catch (error) {
-      try { await session.cleanup(); } catch { /* preservar erro original */ }
-      this.session = undefined;
-      this.semanticSource = undefined;
-      this.windowMetadata = undefined;
+      await session.preserve();
       throw error;
     }
   }
@@ -169,6 +173,7 @@ class RecorderWorker {
         trimStartSeconds: Math.max(0, -this.voiceSyncMs / 1_000),
       }] } : {}),
       keepIntermediates,
+      abortSignal: this.abortController.signal,
     };
   }
 
@@ -222,6 +227,12 @@ class RecorderWorker {
   }
 
   async discard() {
+    if (this.rendering || this.previewing) throw new Error("Aguarde o processamento antes de descartar.");
+    if (this.session) {
+      if (this.session.state !== "failed") throw new Error("Finalize a gravação antes de descartar.");
+      await this.session.cleanup();
+      this.session = undefined;
+    }
     if (this.project) await cleanupScreenProject(this.project);
     this.project = undefined;
     this.segmentCount = 0;
@@ -265,9 +276,19 @@ class RecorderWorker {
     return this.status();
   }
 
+  async shutdown() {
+    this.shuttingDown = true;
+    this.abortController.abort();
+    await this.session?.preserve();
+    return this.status();
+  }
+
   async handle(command, payload) {
+    if (command === "shutdown") return await this.shutdown();
+    if (this.shuttingDown) throw new Error("O gravador está sendo encerrado; os arquivos foram preservados.");
     switch (command) {
       case "status": return this.status();
+      case "preserve": await this.session?.preserve(); return this.status();
       case "doctor": return await runDoctor();
       case "displays": return await listDisplays();
       case "windows": return await listWindows();
@@ -397,9 +418,15 @@ async function dispatch(message) {
   }
 }
 
+function receive(message) {
+  // Estado e encerramento não podem esperar na fila de um encoder travado.
+  if (message?.command === "status" || message?.command === "shutdown") void dispatch(message);
+  else queue = queue.then(() => dispatch(message), () => dispatch(message));
+}
+
 if (process.parentPort) {
   process.parentPort.on("message", (event) => {
-    queue = queue.then(() => dispatch(event.data), () => dispatch(event.data));
+    receive(event.data);
   });
 } else {
   process.stdin.setEncoding("utf8");
@@ -416,18 +443,15 @@ if (process.parentPort) {
         respond({ id: null, ok: false, error: `Mensagem JSON inválida: ${messageOf(error)}` });
         continue;
       }
-      queue = queue.then(() => dispatch(message), () => dispatch(message));
+      receive(message);
     }
   });
 
   process.stdin.on("end", () => {
-    queue = queue.finally(async () => {
-      await worker.cleanup();
-      process.exit(0);
-    });
+    void worker.shutdown().finally(() => process.exit(0));
   });
 }
 
 process.on("SIGTERM", () => {
-  void worker.cleanup().finally(() => process.exit(0));
+  void worker.shutdown().finally(() => process.exit(0));
 });

@@ -60,6 +60,12 @@ const elements = {
   startButton: document.querySelector("#startButton"),
   startHint: document.querySelector("#startHint"),
   previewingPanel: document.querySelector("#previewingPanel"),
+  processingTitle: document.querySelector("#processingTitle"),
+  processingDescription: document.querySelector("#processingDescription"),
+  recoveryPanel: document.querySelector("#recoveryPanel"),
+  recoveryDescription: document.querySelector("#recoveryDescription"),
+  retryStopButton: document.querySelector("#retryStopButton"),
+  openRecoveryButton: document.querySelector("#openRecoveryButton"),
   resultPanel: document.querySelector("#resultPanel"),
   previewFrame: document.querySelector("#previewFrame"),
   previewVideo: document.querySelector("#previewVideo"),
@@ -453,6 +459,13 @@ function renderState(state) {
   const isPreviewing = phase === "previewing";
   const isSaving = phase === "rendering";
   const canConfigure = ["idle", "saved"].includes(phase);
+  const needsRecovery = phase === "failed";
+  elements.recoveryPanel.hidden = !needsRecovery;
+  elements.retryStopButton.disabled = busy || !state.recovery?.canRetry;
+  elements.openRecoveryButton.disabled = !(state.recovery?.directories?.length > 0);
+  elements.recoveryDescription.textContent = state.recovery?.canRetry
+    ? "Os trechos originais foram preservados. Corrija o problema informado e tente finalizar novamente."
+    : "A operação foi interrompida. Os arquivos temporários disponíveis foram mantidos para recuperação manual. Reinicie o aplicativo antes de gravar novamente.";
   const environmentReady = state.doctor?.ok === true;
   const selectionReady = sourceIsReady(state);
 
@@ -463,7 +476,11 @@ function renderState(state) {
   elements.microphonePanel.hidden = !canConfigure && !(hasProject && state.voice?.hasMicrophone);
   elements.saveOptionsPanel.hidden = !canConfigure;
   elements.actionPanel.hidden = !canConfigure;
-  elements.previewingPanel.hidden = !isPreviewing;
+  elements.previewingPanel.hidden = !isPreviewing && phase !== "stopping";
+  elements.processingTitle.textContent = phase === "stopping" ? "Finalizando captura" : "Preparando a prévia";
+  elements.processingDescription.textContent = phase === "stopping"
+    ? "Encerrando os dispositivos e consolidando os trechos. Você pode fechar o aplicativo para interromper e preservar os arquivos."
+    : "Aplicando o cursor escolhido e codificando uma visualização local.";
   elements.resultPanel.hidden = !hasProject;
   elements.voiceResultPanel.hidden = !hasProject || state.voice?.hasMicrophone !== true;
   elements.webcamResultPanel.hidden = !hasProject || state.webcam?.hasWebcam !== true;
@@ -853,6 +870,18 @@ elements.retryPreviewButton.addEventListener("click", async () => {
   try { renderState(await unwrap(window.autoScreen.retryPreview())); }
   catch (error) { showLocalError(error); }
   finally { setBusy(false); }
+});
+
+elements.retryStopButton.addEventListener("click", async () => {
+  setBusy(true);
+  try { renderState(await unwrap(window.autoScreen.stopRecording())); }
+  catch (error) { showLocalError(error); }
+  finally { setBusy(false); }
+});
+
+elements.openRecoveryButton.addEventListener("click", async () => {
+  try { await unwrap(window.autoScreen.openRecovery()); }
+  catch (error) { showLocalError(error); }
 });
 
 for (const control of [elements.resultBackgroundBlur, elements.resultFaceRetouch]) {

@@ -41,6 +41,7 @@ const recorderSchema = z.object({
   ffmpegPath: z.string().min(1).optional(),
   tempDirectory: z.string().min(1).optional(),
   maxDurationSeconds: positive.max(3_600).optional(),
+  durationLimitAction: z.enum(["abort", "stop"]).optional(),
   inputControl: inputControlSchema.optional(),
   abortSignal: z.custom<AbortSignal>((value) => value instanceof AbortSignal).optional(),
 }).strict();

@@ -31,6 +31,7 @@ function registerHandler(channel, handler) {
 
 function registerIpc() {
   registerHandler("app:get-state", async () => controller.publicState());
+  registerHandler("app:request-quit", async () => await controller.confirmQuit());
   registerHandler("app:bootstrap", async () => await controller.bootstrap());
   registerHandler("app:refresh-doctor", async () => await controller.refreshDoctor());
   registerHandler("app:list-displays", async () => await controller.refreshDisplays());
@@ -51,6 +52,7 @@ function registerIpc() {
   registerHandler("recording:save", async () => await controller.saveRecording());
   registerHandler("recording:discard", async () => await controller.discardRecording());
   registerHandler("recording:open-output", async () => controller.openOutput());
+  registerHandler("recording:open-recovery", async () => await controller.openRecovery());
   registerHandler("voice:store-key", async (_event, value) => await controller.storeOpenRouterKey(value));
   registerHandler("voice:remove-key", async () => await controller.removeOpenRouterKey());
   registerHandler("voice:choose-reference", async () => await controller.chooseVoiceReference());

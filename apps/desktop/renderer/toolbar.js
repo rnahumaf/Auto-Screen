@@ -37,11 +37,14 @@ function render(nextState) {
     ? "Gravação pausada"
     : transitioning
       ? phase === "stopping" ? "Finalizando captura" : "Preparando"
-      : "Gravando";
+      : phase === "recording" && state.remainingSeconds !== null && state.remainingSeconds <= 60
+        ? `Encerra em ${Math.ceil(state.remainingSeconds)} s`
+        : phase === "recording" ? "Gravando" : "Captura encerrada";
 
   pauseButton.textContent = paused ? "Continuar" : "Pausar";
   pauseButton.disabled = busy || transitioning || !["recording", "paused"].includes(phase);
-  stopButton.disabled = busy || transitioning || !["recording", "paused"].includes(phase);
+  stopButton.textContent = transitioning ? "Encerrar" : "Parar";
+  stopButton.disabled = !transitioning && (busy || !["recording", "paused"].includes(phase));
 }
 
 pauseButton.addEventListener("click", async () => {
@@ -58,6 +61,11 @@ pauseButton.addEventListener("click", async () => {
 });
 
 stopButton.addEventListener("click", async () => {
+  if (["starting", "pausing", "resuming", "stopping"].includes(state?.phase)) {
+    try { await unwrap(window.autoScreen.requestQuit()); }
+    catch (error) { statusText.textContent = error instanceof Error ? error.message : String(error); }
+    return;
+  }
   busy = true;
   render();
   try {

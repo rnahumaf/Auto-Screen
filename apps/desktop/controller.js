@@ -40,6 +40,7 @@ export class DesktopController {
     this.lastError = undefined;
     this.forceQuit = false;
     this.quittingPrompt = false;
+    this.discardPrompt = false;
     this.selection = {
       mode: "display",
       label: "Tela inteira",
@@ -59,6 +60,11 @@ export class DesktopController {
     return {
       phase: this.phase(),
       elapsedSeconds: this.workerStatus.elapsedSeconds ?? 0,
+      remainingSeconds: this.workerStatus.remainingSeconds ?? null,
+      recovery: {
+        directories: this.workerStatus.recoveryDirectories ?? [],
+        canRetry: this.workerStatus.canRetryStop === true,
+      },
       source: {
         mode: this.selection.mode,
         label: this.selection.label,
@@ -122,16 +128,26 @@ export class DesktopController {
   }
 
   async pollStatus() {
-    if (this.statusPolling) return;
+    if (this.statusPolling || this.forceQuit || !["recording", "paused"].includes(this.workerStatus.phase)) return;
     this.statusPolling = true;
     try {
-      this.setWorkerStatus(await this.worker.invoke("status"));
+      const status = await this.worker.invoke("status");
+      // Uma resposta solicitada antes de Pausar/Parar não pode sobrescrever a transição.
+      if (!["recording", "paused"].includes(this.workerStatus.phase)) return;
+      this.setWorkerStatus(status);
+      if (status.durationLimitReached || status.remainingSeconds === 0) {
+        await this.stopRecording();
+        return;
+      }
       this.sendState();
     } catch (error) {
       this.stopStatusTimer();
       this.windows.hideToolbar();
       this.windows.hideCaptureOverlay();
       this.windows.showMain();
+      if (!["captured", "failed"].includes(this.workerStatus.phase)) {
+        this.workerStatus = { ...this.workerStatus, phase: "failed", canRetryStop: false };
+      }
       this.setError(error);
     } finally {
       this.statusPolling = false;
@@ -410,6 +426,7 @@ export class DesktopController {
       toolbar.hide();
       this.startStatusTimer();
       this.sendState();
+      toolbar.showInactive();
       this.setWorkerStatus(await this.worker.invoke("start", {
         capture: fixedCapture,
         semanticSource,
@@ -426,8 +443,10 @@ export class DesktopController {
       this.sendState();
       return this.publicState();
     } catch (error) {
-      if (workerStarted) await this.worker.invoke("cleanup").catch(() => undefined);
-      this.workerStatus = { phase: "idle", elapsedSeconds: 0, segmentCount: 0, project: null };
+      if (workerStarted) {
+        try { await this.worker.invoke("preserve"); } catch { /* manter arquivos e informar a falha */ }
+      }
+      await this.recoverWorkerState();
       this.stopStatusTimer();
       if (toolbar && !toolbar.isDestroyed()) toolbar.hide();
       this.windows.hideCaptureOverlay();
@@ -457,18 +476,20 @@ export class DesktopController {
       this.windows.hideToolbar();
       this.windows.hideCaptureOverlay();
       this.windows.showMain();
-      try { this.setWorkerStatus(await this.worker.invoke("cleanup")); } catch { /* melhor esforço */ }
+      await this.recoverWorkerState();
       throw error;
     }
   }
 
   async stopRecording() {
-    if (!this.workerStatus || !["recording", "paused"].includes(this.workerStatus.phase)) {
+    if (!this.workerStatus || (!["recording", "paused"].includes(this.workerStatus.phase) &&
+        !(this.workerStatus.phase === "failed" && this.workerStatus.canRetryStop))) {
       throw new Error("Não há gravação em andamento.");
     }
     this.windows.hideToolbar();
     this.windows.hideCaptureOverlay();
     this.workerStatus = { ...this.workerStatus, phase: "stopping" };
+    this.windows.showMain();
     this.sendState();
     try {
       this.setWorkerStatus(await this.worker.invoke("stop"));
@@ -479,11 +500,25 @@ export class DesktopController {
     } catch (error) {
       this.stopStatusTimer();
       this.windows.showMain();
-      this.workerStatus = { phase: "idle", elapsedSeconds: 0, segmentCount: 0, project: null };
+      await this.recoverWorkerState();
       throw error;
     }
 
     return await this.preparePreview();
+  }
+
+  async recoverWorkerState() {
+    try { this.setWorkerStatus(await this.worker.invoke("status")); }
+    catch { this.workerStatus = { ...this.workerStatus, phase: "failed", canRetryStop: false }; }
+    this.sendState();
+  }
+
+  async openRecovery() {
+    const directory = this.workerStatus.recoveryDirectories?.[0];
+    if (!directory) throw new Error("Nenhuma pasta de recuperação foi identificada nesta sessão.");
+    const error = await shell.openPath(directory);
+    if (error) throw new Error(error);
+    return this.publicState();
   }
 
   async preparePreview({ allowAutoSave = true } = {}) {
@@ -574,12 +609,25 @@ export class DesktopController {
   }
 
   async discardRecording() {
-    if (this.workerStatus.phase !== "captured") return this.publicState();
-    this.setWorkerStatus(await this.worker.invoke("discard"));
-    this.voiceReferencePath = undefined;
-    this.clearError();
-    this.sendState();
-    return this.publicState();
+    if (this.workerStatus.phase !== "captured" || this.discardPrompt) return this.publicState();
+    this.discardPrompt = true;
+    try {
+      const duration = Math.round(this.workerStatus.project?.durationSeconds ?? 0);
+      const { response } = await dialog.showMessageBox(this.windows.mainWindow, {
+        type: "warning",
+        title: "Descartar gravação",
+        message: "Descartar a gravação ainda não salva?",
+        detail: `A gravação de ${Math.floor(duration / 60)} min ${duration % 60} s será apagada. Esta ação não pode ser desfeita.`,
+        buttons: ["Manter gravação", "Descartar gravação"],
+        defaultId: 0, cancelId: 0, noLink: true,
+      });
+      if (response !== 1 || this.workerStatus.phase !== "captured" || this.forceQuit) return this.publicState();
+      this.setWorkerStatus(await this.worker.invoke("discard"));
+      this.voiceReferencePath = undefined;
+      this.clearError();
+      this.sendState();
+      return this.publicState();
+    } finally { this.discardPrompt = false; }
   }
 
   openOutput() {
@@ -679,7 +727,7 @@ export class DesktopController {
   }
 
   hasPendingWork() {
-    return ["starting", "recording", "pausing", "paused", "resuming", "stopping", "previewing", "captured", "rendering"]
+    return ["starting", "recording", "pausing", "paused", "resuming", "stopping", "previewing", "captured", "rendering", "failed"]
       .includes(this.workerStatus.phase);
   }
 
@@ -694,6 +742,7 @@ export class DesktopController {
         return;
       }
 
+      this.windows.showMain();
       const response = await dialog.showMessageBox(this.windows.mainWindow, {
         type: "warning",
         title: "Encerrar Auto-Screen",
@@ -704,17 +753,15 @@ export class DesktopController {
           : ["starting", "recording", "pausing", "paused", "resuming", "stopping"].includes(this.workerStatus.phase)
             ? "Há uma gravação em andamento."
             : "Há uma gravação ainda não salva.",
-        detail: ["previewing", "rendering"].includes(this.workerStatus.phase)
-          ? "Encerrar agora pode preservar arquivos temporários para recuperação."
-          : "Ao encerrar, a captura temporária será descartada.",
-        buttons: ["Continuar no aplicativo", ["previewing", "rendering"].includes(this.workerStatus.phase) ? "Encerrar mesmo assim" : "Encerrar e descartar"],
+        detail: "Os processos serão encerrados e os arquivos temporários serão mantidos para recuperação. Use Descartar para apagar uma gravação.",
+        buttons: ["Continuar no aplicativo", "Encerrar e preservar arquivos"],
         defaultId: 0,
         cancelId: 0,
         noLink: true,
       });
       if (response.response !== 1) return;
 
-      try { await this.worker.invoke("cleanup"); } catch { /* melhor esforço */ }
+      this.stopStatusTimer();
       this.windows.hideCaptureOverlay();
       this.forceQuit = true;
       await this.worker.dispose();
