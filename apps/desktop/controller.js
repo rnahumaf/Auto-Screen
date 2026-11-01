@@ -1,3 +1,4 @@
+import { checkedWorkerState } from "./recording-contract.js";
 import { app, dialog, shell } from "electron";
 import { basename, dirname, extname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
@@ -27,7 +28,14 @@ export class DesktopController {
     this.workerStatus = { phase: "idle", elapsedSeconds: 0, segmentCount: 0, project: null };
     this.statusTimer = undefined;
     this.statusPolling = false;
+    this.statusPublishedAt = 0;
     this.doctorResult = undefined;
+    this.doctorCheckedAt = 0;
+    this.startRequest = undefined;
+    this.processing = undefined;
+    this.processingCancelled = false;
+    this.startupTimings = undefined;
+    this.notice = undefined;
     this.displayCache = [];
     this.windowCache = [];
     this.webcamCache = [];
@@ -59,6 +67,13 @@ export class DesktopController {
   publicState() {
     return {
       phase: this.phase(),
+      preparation: this.startRequest ? {
+        stage: this.startRequest.stage,
+        elapsedMs: Math.round(performance.now() - this.startRequest.startedAt),
+      } : null,
+      startupTimings: this.startupTimings ?? null,
+      processing: this.processing ?? null,
+      notice: this.notice ?? null,
       elapsedSeconds: this.workerStatus.elapsedSeconds ?? 0,
       remainingSeconds: this.workerStatus.remainingSeconds ?? null,
       recovery: {
@@ -99,7 +114,7 @@ export class DesktopController {
     if (status && typeof status === "object") {
       if (status.previewFrame) this.windows.sendCameraFrame(status.previewFrame);
       const { previewFrame: _frame, ...publicStatus } = status;
-      this.workerStatus = publicStatus;
+      this.workerStatus = checkedWorkerState(publicStatus);
     }
   }
 
@@ -118,7 +133,8 @@ export class DesktopController {
 
   startStatusTimer() {
     this.stopStatusTimer();
-    this.statusTimer = setInterval(() => { void this.pollStatus(); }, 250);
+    this.statusPublishedAt = 0;
+    this.statusTimer = setInterval(() => { void this.pollStatus(); }, 1_000 / 15);
   }
 
   stopStatusTimer() {
@@ -139,7 +155,12 @@ export class DesktopController {
         await this.stopRecording();
         return;
       }
-      this.sendState();
+      // Preview transport follows camera cadence; controls keep their 250 ms cadence.
+      const now = performance.now();
+      if (now - this.statusPublishedAt >= 250) {
+        this.statusPublishedAt = now;
+        this.sendState();
+      }
     } catch (error) {
       this.stopStatusTimer();
       this.windows.hideToolbar();
@@ -156,6 +177,7 @@ export class DesktopController {
 
   async refreshDoctor() {
     this.doctorResult = await this.worker.invoke("doctor");
+    this.doctorCheckedAt = performance.now();
     this.sendState();
     return this.doctorResult;
   }
@@ -274,6 +296,7 @@ export class DesktopController {
       this.worker.invoke("status"),
     ]);
     this.doctorResult = doctor;
+    this.doctorCheckedAt = performance.now();
     this.displayCache = displays.sort((left, right) => left.index - right.index);
     if (this.displayCache.length === 0) throw new Error("Nenhum monitor compatível foi encontrado.");
     this.selection = this.displaySelection(
@@ -349,84 +372,106 @@ export class DesktopController {
   async startRecording(options) {
     if (process.platform !== "win32") throw new Error("A interface de gravação funciona somente no Windows.");
     if (!["idle", "saved"].includes(this.phase())) throw new Error("Finalize a operação atual antes de iniciar outra gravação.");
-    await this.stopCameraPreview();
-    if (options && typeof options === "object") {
-      const { outputDirectory: _ignored, ...allowed } = options;
-      await this.settingsStore.update(allowed);
-    }
-    const settings = this.settingsStore.value;
-    let webcam;
-    let webcamPreview;
-    let microphone;
-    if (settings.webcam.enabled) {
-      const devices = await this.refreshWebcams();
-      const selected = devices.find((device) => device.id === settings.webcam.deviceId);
-      if (!selected) throw new Error("A webcam escolhida não está disponível. Atualize a lista ou desative a webcam.");
-      webcam = { ...settings.webcam, deviceId: selected.id };
-      webcamPreview = { ...settings.webcam, name: selected.name };
-    }
-    if (settings.microphone.enabled) {
-      const devices = await this.refreshMicrophones();
-      const selected = devices.find((device) => device.id === settings.microphone.deviceId);
-      if (!selected) throw new Error("O microfone escolhido não está disponível. Atualize a lista ou desative o microfone.");
-      microphone = { enabled: true, deviceId: selected.id, latencyMs: settings.microphone.latencyMs ?? 0 };
-    }
-
-    const doctor = await this.refreshDoctor();
-    if (!doctor.ok) {
-      const failed = doctor.checks
-        .filter((check) => !check.ok)
-        .map((check) => `${check.name}: ${check.detail}`)
-        .join("\n");
-      throw new Error(`O ambiente ainda não está pronto:\n${failed}`);
-    }
-
-    let fixedCapture = this.selection.capture;
-    let semanticSource;
-    let windowMetadata;
-    if (this.selection.mode === "window") {
-      const selected = await this.findWindowByHandle(this.selection.window?.handle);
-      this.selection = {
-        mode: "window",
-        label: selected.title,
-        detail: `Janela fixa · ${formatBounds(selected.rect)}`,
-        capture: {
-          kind: "window",
-          title: selected.title,
-          match: "exact",
-          displayIndex: selected.displayIndex,
-        },
-        bounds: selected.rect,
-        window: selected,
-      };
-      fixedCapture = {
-        kind: "region",
-        rect: { ...selected.rect },
-        displayIndex: selected.displayIndex,
-      };
-      semanticSource = this.selection.capture;
-      windowMetadata = {
-        handle: selected.handle,
-        processId: selected.processId,
-        initialTitle: selected.title,
-      };
-    }
-
-    const cursorMode = settings.cursorMode;
-
+    const previous = this.workerStatus;
+    const request = { startedAt: performance.now(), stage: "Preparando gravação", cancelled: false, dispatched: false, timings: {} };
+    this.startRequest = request;
+    this.notice = undefined;
     this.clearError();
-    this.lastSavedPath = undefined;
-    this.voiceReferencePath = undefined;
     this.workerStatus = { phase: "starting", elapsedSeconds: 0, segmentCount: 0, project: null };
+    this.sendState();
+    const checkCancelled = () => {
+      if (request.cancelled || this.forceQuit) throw new Error("Preparação cancelada.");
+    };
+    const step = async (label, action) => {
+      checkCancelled(); request.stage = label; this.sendState();
+      const at = performance.now();
+      const value = await action();
+      request.timings[label] = Math.round(performance.now() - at);
+      checkCancelled(); return value;
+    };
+    const feedbackTimer = setInterval(() => this.sendState(), 250);
     let toolbar;
     let workerStarted = false;
     try {
-      this.windows.hideMain();
-      toolbar = await this.windows.ensureToolbar(this.selection.bounds);
-      toolbar.hide();
-      this.startStatusTimer();
+      await step("Liberando a prévia da câmera", () => this.stopCameraPreview());
+      if (options && typeof options === "object") {
+        const { outputDirectory: _ignored, ...allowed } = options;
+        await step("Guardando preferências", () => this.settingsStore.update(allowed));
+      }
+      const settings = this.settingsStore.value;
+      let webcam;
+      let webcamPreview;
+      let microphone;
+      if (settings.webcam.enabled) {
+        const devices = await step("Conferindo a webcam", () => this.refreshWebcams());
+        const selected = devices.find((device) => device.id === settings.webcam.deviceId);
+        if (!selected) throw new Error("A webcam escolhida não está disponível. Atualize a lista ou desative a webcam.");
+        webcam = { ...settings.webcam, deviceId: selected.id };
+        webcamPreview = { ...settings.webcam, name: selected.name };
+      }
+      if (settings.microphone.enabled) {
+        const devices = await step("Conferindo o microfone", () => this.refreshMicrophones());
+        const selected = devices.find((device) => device.id === settings.microphone.deviceId);
+        if (!selected) throw new Error("O microfone escolhido não está disponível. Atualize a lista ou desative o microfone.");
+        microphone = { enabled: true, deviceId: selected.id, latencyMs: settings.microphone.latencyMs ?? 0 };
+      }
+
+      const doctor = await step("Verificando o ambiente", () =>
+        this.doctorResult?.ok && performance.now() - this.doctorCheckedAt < 60_000
+          ? this.doctorResult : this.refreshDoctor());
+      if (!doctor.ok) {
+        const failed = doctor.checks
+          .filter((check) => !check.ok)
+          .map((check) => `${check.name}: ${check.detail}`)
+          .join("\n");
+        throw new Error(`O ambiente ainda não está pronto:\n${failed}`);
+      }
+
+      let fixedCapture = this.selection.capture;
+      let semanticSource;
+      let windowMetadata;
+      if (this.selection.mode === "window") {
+        const selected = await step("Conferindo a janela", () => this.findWindowByHandle(this.selection.window?.handle));
+        this.selection = {
+          mode: "window",
+          label: selected.title,
+          detail: `Janela fixa · ${formatBounds(selected.rect)}`,
+          capture: {
+            kind: "window",
+            title: selected.title,
+            match: "exact",
+            displayIndex: selected.displayIndex,
+          },
+          bounds: selected.rect,
+          window: selected,
+        };
+        fixedCapture = {
+          kind: "region",
+          rect: { ...selected.rect },
+          displayIndex: selected.displayIndex,
+        };
+        semanticSource = this.selection.capture;
+        windowMetadata = {
+          handle: selected.handle,
+          processId: selected.processId,
+          initialTitle: selected.title,
+        };
+      }
+
+      const cursorMode = settings.cursorMode;
+
+      toolbar = await step("Abrindo os controles", () => this.windows.ensureToolbar(this.selection.bounds));
       this.sendState();
       toolbar.showInactive();
+      // A janela principal permanece visível até a barra protegida terminar de abrir.
+      this.windows.hideMain();
+      request.stage = "Iniciando os dispositivos";
+      checkCancelled();
+      request.dispatched = true;
+      this.lastSavedPath = undefined;
+      this.voiceReferencePath = undefined;
+      this.sendState();
+      const captureAt = performance.now();
       this.setWorkerStatus(await this.worker.invoke("start", {
         capture: fixedCapture,
         semanticSource,
@@ -437,22 +482,59 @@ export class DesktopController {
         webcam,
         microphone,
       }));
+      request.timings.captureReadyMs = Math.round(performance.now() - captureAt);
+      this.startupTimings = { totalMs: Math.round(performance.now() - request.startedAt), stages: request.timings };
+      checkCancelled();
       workerStarted = true;
+      this.startRequest = undefined;
+      this.startStatusTimer();
+      this.sendState();
       await this.windows.showCaptureOverlay(this.selection.bounds, webcamPreview);
       toolbar.showInactive();
       this.sendState();
       return this.publicState();
     } catch (error) {
-      if (workerStarted) {
+      if (workerStarted || (request.cancelled && request.dispatched)) {
         try { await this.worker.invoke("preserve"); } catch { /* manter arquivos e informar a falha */ }
       }
-      await this.recoverWorkerState();
+      if (request.dispatched) await this.recoverWorkerState();
+      else this.workerStatus = previous;
+      this.doctorCheckedAt = 0;
       this.stopStatusTimer();
       if (toolbar && !toolbar.isDestroyed()) toolbar.hide();
       this.windows.hideCaptureOverlay();
       this.windows.showMain();
+      if (request.cancelled) {
+        this.notice = "Preparação cancelada. Você pode tentar novamente; eventuais arquivos temporários foram preservados.";
+        this.clearError();
+        return this.publicState();
+      }
       throw error;
+    } finally {
+      clearInterval(feedbackTimer);
+      this.startRequest = undefined;
+      this.sendState();
     }
+  }
+
+  async cancelOperation() {
+    if (this.startRequest) {
+      const request = this.startRequest;
+      if (request.cancelled) return this.publicState();
+      request.cancelled = true;
+      request.stage = "Cancelando preparação";
+      this.workerStatus = { ...this.workerStatus, phase: "cancelling" };
+      this.sendState();
+      if (request.dispatched) await this.worker.invoke("cancel-start");
+    } else if (this.processing && !this.processingCancelled) {
+      this.processingCancelled = true;
+      this.processing = { stage: "Cancelando processamento", detail: "A gravação original será mantida." };
+      this.processingAbort?.abort();
+      this.windows.cancelWebcamProcessing();
+      this.sendState();
+      await this.worker.invoke("cancel-processing");
+    }
+    return this.publicState();
   }
 
   async pauseOrResume() {
@@ -524,19 +606,34 @@ export class DesktopController {
   async preparePreview({ allowAutoSave = true } = {}) {
     if (this.workerStatus.phase !== "captured" || !this.workerStatus.project) throw new Error("Não há gravação pronta para visualizar.");
     this.workerStatus = { ...this.workerStatus, phase: "previewing" };
+    this.processingCancelled = false;
+    this.processingAbort = new AbortController();
+    this.processing = { stage: "Preparando os segmentos", detail: "Os arquivos originais serão mantidos em caso de cancelamento." };
     this.sendState();
     try {
       const filterSources = await this.worker.invoke("webcam-effects-sources");
+      if (this.processingCancelled) throw new Error("Processamento cancelado. A gravação original foi mantida.");
       if (filterSources.length > 0) {
         const paths = [];
-        for (const source of filterSources) {
+        for (const [index, source] of filterSources.entries()) {
+          if (this.processingCancelled) throw new Error("Processamento cancelado. A gravação original foi mantida.");
+          const stage = `Filtrando webcam · trecho ${index + 1} de ${filterSources.length}`;
+          this.processing = { stage, detail: "Preparando filtros locais" };
+          this.sendState();
           paths.push(await this.windows.processWebcamSegment(source, {
             ...this.settingsStore.value.webcam,
             ...this.workerStatus.webcamFilters,
-          }));
+          }, (progress) => {
+            if (this.processingCancelled) return;
+            this.processing = { stage, detail: `${progress.frames} quadros processados`, fraction: Math.min(1, progress.seconds / source.durationSeconds) };
+            this.sendState();
+          }, this.processingAbort.signal));
         }
-        this.setWorkerStatus(await this.worker.invoke("webcam-effects-apply", { paths }));
+        this.setWorkerStatus({ ...await this.worker.invoke("webcam-effects-apply", { paths }), phase: "previewing" });
       }
+      if (this.processingCancelled) throw new Error("Processamento cancelado. A gravação original foi mantida.");
+      this.processing = { stage: "Compondo e validando o vídeo", detail: "Aplicando cursor e áudio; depois conferindo os quadros do MP4." };
+      this.sendState();
       this.setWorkerStatus(await this.worker.invoke("preview"));
       this.clearError();
       this.sendState();
@@ -546,6 +643,9 @@ export class DesktopController {
     } catch (error) {
       try { this.setWorkerStatus(await this.worker.invoke("status")); } catch { /* manter estado capturado */ }
       throw error;
+    } finally {
+      this.processing = undefined;
+      this.sendState();
     }
   }
 
@@ -594,6 +694,8 @@ export class DesktopController {
 
     this.clearError();
     this.workerStatus = { ...this.workerStatus, phase: "rendering" };
+    this.processingCancelled = false;
+    this.processing = { stage: "Salvando o vídeo", detail: "Reutilizando a prévia quando disponível e validando a publicação do MP4." };
     this.sendState();
     try {
       const saved = await this.worker.invoke("save", { outputFile });
@@ -605,6 +707,9 @@ export class DesktopController {
     } catch (error) {
       try { this.setWorkerStatus(await this.worker.invoke("status")); } catch { /* manter estado local */ }
       throw error;
+    } finally {
+      this.processing = undefined;
+      this.sendState();
     }
   }
 
@@ -676,9 +781,7 @@ export class DesktopController {
   async refreshVoicePreview(status) {
     this.setWorkerStatus(status);
     this.sendState();
-    this.setWorkerStatus(await this.worker.invoke("preview"));
-    this.sendState();
-    return this.publicState();
+    return await this.preparePreview({ allowAutoSave: false });
   }
 
   async processVoiceLocal(options) {
@@ -727,7 +830,7 @@ export class DesktopController {
   }
 
   hasPendingWork() {
-    return ["starting", "recording", "pausing", "paused", "resuming", "stopping", "previewing", "captured", "rendering", "failed"]
+    return ["starting", "cancelling", "recording", "pausing", "paused", "resuming", "stopping", "previewing", "captured", "rendering", "failed"]
       .includes(this.workerStatus.phase);
   }
 
@@ -750,7 +853,7 @@ export class DesktopController {
           ? this.workerStatus.phase === "previewing"
             ? "A prévia do vídeo ainda está sendo preparada."
             : "O arquivo MP4 ainda está sendo finalizado."
-          : ["starting", "recording", "pausing", "paused", "resuming", "stopping"].includes(this.workerStatus.phase)
+          : ["starting", "cancelling", "recording", "pausing", "paused", "resuming", "stopping"].includes(this.workerStatus.phase)
             ? "Há uma gravação em andamento."
             : "Há uma gravação ainda não salva.",
         detail: "Os processos serão encerrados e os arquivos temporários serão mantidos para recuperação. Use Descartar para apagar uma gravação.",

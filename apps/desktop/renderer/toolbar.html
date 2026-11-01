@@ -10,15 +10,15 @@
 <body>
   <div class="toolbar">
     <div class="drag-area">
-      <span id="statusDot" class="status-dot"></span>
+      <span id="statusDot" class="status-dot preparing"></span>
       <div class="status-copy">
-        <strong id="statusText">Gravando</strong>
+        <strong id="statusText" role="status">Preparando</strong>
         <span id="timer">00:00</span>
       </div>
     </div>
     <div class="controls">
-      <button id="pauseButton" type="button">Pausar</button>
-      <button id="stopButton" class="stop-button" type="button">Parar</button>
+      <button id="pauseButton" type="button" disabled>Pausar</button>
+      <button id="stopButton" class="stop-button" type="button" disabled>Cancelar</button>
     </div>
   </div>
   <script type="module" src="./toolbar.js"></script>

@@ -18,6 +18,7 @@
 - `@nut-tree-fork/nut-js@4.2.6`: automação nativa de mouse, teclado, janela ativa e clipboard.
 - `spessasynth_core@4.3.16`: sintetiza MIDI localmente a partir de SoundFont fornecido pelo usuário.
 - `zod@4.4.3`: valida roteiros antes de qualquer ação.
+- `mediabunny@1.61.3` (MPL-2.0, código e licença preservados na distribuição): demux/mux local e WebCodecs no processamento dos filtros, com timestamps explícitos. Não abre dispositivos nem acessa rede nesse fluxo.
 - FFmpeg/FFprobe e PowerShell pertencem ao ambiente e não são baixados em instalação.
 
 Em 4 de agosto de 2026, `npm audit` reporta sete entradas moderadas originadas no mesmo advisory de `file-type@16.5.4`, alcançado por Jimp dentro de nut.js. O caso é um loop infinito ao analisar ASF malformado. Auto-Screen não expõe nem chama os recursos de imagem dessa dependência, mas o alerta permanece na árvore instalada e deve ser revisto quando nut.js atualizar Jimp. Não use `overrides` incompatíveis para silenciar o relatório.
@@ -31,6 +32,8 @@ O runtime agêntico não acessa rede. Na interface humana, somente as ações ex
 O Setup e o executável portátil incluem Electron/Node, o JavaScript compilado do Auto-Screen, dependências npm de produção, módulos nativos e o helper PowerShell. FFmpeg, FFprobe e SoundFonts não são incorporados. O aplicativo não baixa esses componentes automaticamente.
 
 O núcleo roda em um `UtilityProcess` separado. O código do aplicativo fica em ASAR e somente módulos nativos que precisam ser carregados pelo sistema operacional são desempacotados. O renderer continua sem acesso direto a Node, filesystem ou processos.
+
+O renderer dos filtros pode ler somente intervalos do arquivo associado ao job ativo, com token e remetente conferidos e limite por leitura. As escritas também são limitadas ao arquivo de saída desse job e recebem o offset do muxer, incluindo a atualização de seus headers. Cache, encoder e writer aplicam backpressure; não é carregado um vídeo inteiro em memória. Nenhum caminho de filesystem é recebido do renderer.
 
 A webcam é enumerada sem abrir o dispositivo. Ao ativá-la, uma sessão de prévia envia quadros JPEG diretamente à interface, sem gravá-los em arquivo; essa sessão termina antes da captura. Durante a gravação, a prévia recebe quadros JPEG do mesmo processo FFmpeg que cria o segmento. Arquivos brutos e filtrados permanecem no projeto temporário, são removidos ao salvar ou descartar e não entram no manifesto final. O aplicativo não transmite imagens pela rede. Os filtros usam MediaPipe local; o modelo RNNoise também é local. Os modelos distribuídos são verificados por SHA-256 antes de empacotar.
 

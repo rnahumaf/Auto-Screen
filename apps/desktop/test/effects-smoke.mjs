@@ -57,7 +57,8 @@ async function main() {
   const manager = new WindowManager(rendererRoot, join(rendererRoot, "preload.cjs"));
   process.stdout.write("Abrindo processamento da webcam.\n");
   const ipc = await import("electron");
-  ipc.ipcMain.handle("webcam-effects:chunk", (event, token, bytes) => manager.appendWebcamEffectsChunk(event.sender, token, bytes).then((value) => ({ ok: true, value }), (error) => ({ ok: false, error: error.message })));
+  ipc.ipcMain.handle("webcam-effects:read-source", (event, token, start, end) => manager.readWebcamEffectsSource(event.sender, token, start, end).then((value) => ({ ok: true, value }), (error) => ({ ok: false, error: error.message })));
+  ipc.ipcMain.handle("webcam-effects:chunk", (event, token, bytes, position) => manager.appendWebcamEffectsChunk(event.sender, token, bytes, position).then((value) => ({ ok: true, value }), (error) => ({ ok: false, error: error.message })));
   ipc.ipcMain.handle("webcam-effects:complete", (event, token, error) => manager.completeWebcamEffects(event.sender, token, error).then((value) => ({ ok: true, value }), (cause) => ({ ok: false, error: cause.message })));
   await manager.processWebcamSegment(source, { backgroundBlur: 50, faceRetouch: 50 });
   await applyWebcamEffects(project, [source.output]);

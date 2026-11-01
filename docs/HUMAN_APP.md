@@ -65,7 +65,7 @@ O microfone é selecionado separadamente. Com ambos ativos, a webcam e o microfo
 
 Durante a captura, uma janela transparente e protegida cobre a área gravada. Sua borda vermelha suave muda para âmbar na pausa; um recorte da webcam mostra o enquadramento e a posição escolhida. Os quadros chegam do mesmo FFmpeg que grava a câmera, porque outro acesso ao dispositivo pode falhar no Windows. A janela ignora o mouse e fica fora do vídeo pelo mecanismo de proteção de conteúdo do Electron.
 
-Os filtros usam dois modelos locais MediaPipe na prévia anterior, na prévia durante a gravação e no processamento final. SelfieSegmenter separa a pessoa do fundo; se não a identificar, o quadro fica nítido e a prévia avisa que o desfoque foi suspenso. FaceLandmarker delimita o rosto para o retoque, com proteção de olhos, sobrancelhas e boca. Se não identificar o rosto, o retoque é suspenso sem afetar o desfoque. Após parar, o processamento visual reproduz cada segmento em uma janela isolada e grava o resultado temporário antes da composição. Esse passo pode demorar mais que a gravação, conforme o computador. Se falhar, o projeto continua disponível para tentar novamente; salvar com filtros pendentes é bloqueado.
+Os filtros usam dois modelos locais MediaPipe na prévia anterior, na prévia durante a gravação e no processamento final. SelfieSegmenter separa a pessoa do fundo; se não a identificar, o quadro fica nítido e a prévia avisa que o desfoque foi suspenso. FaceLandmarker delimita o rosto para o retoque, com proteção de olhos, sobrancelhas e boca. Se não identificar o rosto, o retoque é suspenso sem afetar o desfoque. Após parar, o processamento visual aplica os filtros a cada quadro em uma janela isolada e preserva seus tempos e durações antes da composição. Esse passo pode demorar mais ou menos que a gravação, conforme o computador, sem alterar a timeline. A contagem de quadros, os timestamps e a duração são conferidos antes de usar o resultado; se falhar, o projeto original continua disponível para tentar novamente. Salvar com filtros pendentes é bloqueado.
 
 ## Microfone e voz
 
@@ -176,3 +176,18 @@ Falhas ao finalizar não autorizam apagar a gravação. A consolidação trabalh
 O botão **Descartar** abre uma confirmação com a duração da gravação. **Manter gravação** é a opção padrão e também a ação de Escape. A exclusão só ocorre ao confirmar **Descartar gravação**.
 
 Encerrar o aplicativo com trabalho pendente preserva os arquivos temporários. O pedido de encerramento não espera na fila de codificação: cancela a renderização e tenta parar os dispositivos, com até cinco segundos para resposta e até três segundos adicionais para encerrar a árvore de processos no Windows. As chamadas normais também têm prazo: dez segundos para estado, dois minutos para operações curtas e seis horas para finalização e processamento de mídia. Um timeout bloqueia novas operações até reiniciar o aplicativo e mantém os arquivos para recuperação. Os temporários preservados ocupam espaço até serem recuperados ou removidos pelo usuário.
+
+
+## Preparação, progresso e salvamento
+
+Ao clicar em Iniciar gravação, a interface mostra Preparando imediatamente, bloqueia uma segunda tentativa e informa a etapa e o tempo de espera. A janela principal permanece visível até a barra protegida estar carregada. A barra só mostra Gravando após a confirmação do primeiro quadro pelo motor; o tempo de espera não entra no cronômetro da captura.
+
+Cancelar durante a preparação impede a abertura do próximo dispositivo e aguarda a etapa atual para encerrá-la com segurança. Eventuais arquivos temporários são preservados. Falhas de configuração retornam à configuração com uma mensagem acionável. O diagnóstico positivo pode ser reutilizado por até 60 segundos; Atualizar diagnóstico força uma nova execução, e uma falha na preparação invalida o cache. A fonte de captura continua sendo resolvida pelo motor em cada início. Os tempos de cada etapa ficam disponíveis no estado local em `startupTimings`, sem conteúdo de mídia ou identificadores dos dispositivos.
+
+Webcam e microfone desativados recolhem seus controles. As opções avançadas de voz e OpenRouter ficam em uma seção expansível. A ação Iniciar gravação permanece acessível no rodapé durante a rolagem, sem alterar preferências salvas.
+
+O processamento mostra a etapa atual e, nos filtros da webcam, o trecho e os quadros processados. O prazo do filtro considera 90 segundos sem avanço de quadros, em vez de um limite proporcional à duração. Cancelar processamento mantém a captura original disponível para nova tentativa. A codificação e validação mostram sua etapa sem estimar uma porcentagem fictícia.
+
+Ao salvar uma prévia ainda válida, o aplicativo copia e valida o MP4, atualiza o caminho do manifesto e publica o par com recuperação em caso de falha. Alterações de voz, sincronização ou filtros invalidam essa prévia. A cópia mantém os bytes e timestamps do vídeo, evitando uma segunda codificação. Cancelar antes da publicação mantém os arquivos de destino anteriores; a publicação do par, quando iniciada, é concluída como uma operação única.
+
+A checagem do desktop inclui um contrato inicial com JSDoc/checkJs para fase e duração retornadas pelo worker. A tipagem completa do aplicativo continua sendo uma migração gradual.

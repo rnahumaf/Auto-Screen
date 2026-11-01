@@ -27,7 +27,7 @@
     <nav id="setupNavigation" class="setup-navigation" aria-label="Ir para configurações">
       <a href="#setupPanel">Tela</a>
       <a href="#webcamPanel">Webcam e filtros</a>
-      <a href="#microphonePanel">Voz e OpenRouter</a>
+      <a href="#microphonePanel">Microfone</a>
       <span id="webcamFilterStatus">Filtros da webcam desligados</span>
     </nav>
 
@@ -149,8 +149,8 @@
           <span>Gravar webcam</span>
         </label>
       </div>
-      <div id="webcamDetails">
-        <p id="webcamDisabledHint" class="field-help">Ative Gravar webcam para ajustar o desfoque, o retoque e a posição.</p>
+      <p id="webcamDisabledHint" class="field-help">Ative para incluir sua câmera na gravação.</p>
+      <div id="webcamDetails" hidden>
         <div class="webcam-settings">
           <label class="option-field webcam-device">
             <span>Câmera</span>
@@ -242,7 +242,7 @@
           <span>Gravar microfone</span>
         </label>
       </div>
-      <div id="microphoneDetails" class="microphone-settings">
+      <div id="microphoneDetails" class="microphone-settings" hidden>
         <label class="option-field microphone-device">
           <span>Microfone</span>
           <select id="microphoneSelect"><option value="">Procurando microfones</option></select>
@@ -253,7 +253,9 @@
           <input id="microphoneLatency" type="range" min="0" max="1000" step="25" value="0">
           <small>Use para compensar o atraso de microfones Bluetooth. O valor fica salvo para este dispositivo.</small>
         </label>
-        <div class="voice-setup">
+        <details class="voice-advanced">
+          <summary>Opções avançadas de voz e OpenRouter</summary>
+          <div class="voice-setup">
           <div class="voice-setup-section">
             <h3>Processamento local da voz</h3>
             <p class="field-help">O RNNoise usa um modelo local de IA; o filtro espectral usa o FFmpeg. Ambos processam a gravação no próprio computador, após parar.</p>
@@ -283,6 +285,7 @@
             <p id="openRouterKeyStatus" class="field-help">Nenhuma chave guardada.</p>
           </div>
         </div>
+        </details>
       </div>
     </section>
 
@@ -314,6 +317,16 @@
       <p id="startHint">Conclua a verificação do ambiente para começar.</p>
     </section>
 
+    <p id="operationNotice" class="operation-notice" role="status" hidden></p>
+    <section id="preparationPanel" class="panel saving-panel" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <div role="status" aria-live="polite">
+        <h2 id="preparationTitle">Preparando gravação</h2>
+        <p id="preparationDetail">A captura ainda não foi confirmada.</p>
+      </div>
+      <button id="cancelStartButton" class="secondary-button" type="button">Cancelar</button>
+    </section>
+
     <section id="recoveryPanel" class="panel" hidden aria-labelledby="recoveryTitle">
       <h2 id="recoveryTitle">A gravação precisa de atenção</h2>
       <p id="recoveryDescription" role="status"></p>
@@ -327,8 +340,10 @@
       <div class="spinner" aria-hidden="true"></div>
       <div>
         <h2 id="processingTitle">Preparando a prévia</h2>
-        <p id="processingDescription">Aplicando o cursor escolhido e codificando uma visualização local.</p>
+        <p id="processingDescription" role="status">Aplicando o cursor escolhido e codificando uma visualização local.</p>
+        <progress id="processingProgress" max="1" hidden aria-label="Progresso do trecho da webcam"></progress>
       </div>
+      <button id="cancelProcessingButton" class="secondary-button" type="button">Cancelar processamento</button>
     </section>
 
     <section id="resultPanel" class="panel result-panel" hidden>
@@ -420,9 +435,10 @@
     <section id="savingPanel" class="panel saving-panel" hidden>
       <div class="spinner" aria-hidden="true"></div>
       <div>
-        <h2>Finalizando o MP4</h2>
-        <p>Codificando o vídeo e preparando o arquivo final.</p>
+        <h2 id="savingTitle">Salvando o MP4</h2>
+        <p id="savingDescription" role="status">Validando e preparando o arquivo final.</p>
       </div>
+      <button id="cancelSaveButton" class="secondary-button" type="button">Cancelar salvamento</button>
     </section>
 
     <section id="savedPanel" class="panel saved-panel" hidden>

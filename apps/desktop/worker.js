@@ -4,6 +4,7 @@ import {
   listDisplays,
   listWindows,
   renderScreenProject,
+  saveScreenPreview,
   runDoctor,
 } from "./runtime/index.js";
 import { HumanRecorderSession } from "./human-recorder.js";
@@ -22,6 +23,7 @@ class RecorderWorker {
     this.project = undefined;
     this.segmentCount = 0;
     this.previewPath = undefined;
+    this.previewResult = undefined;
     this.previewing = false;
     this.rendering = false;
     this.semanticSource = undefined;
@@ -35,6 +37,7 @@ class RecorderWorker {
     this.webcamRawPaths = [];
     this.abortController = new AbortController();
     this.shuttingDown = false;
+    this.cancelledRecoveryDirectories = [];
   }
 
   status() {
@@ -53,7 +56,7 @@ class RecorderWorker {
       durationLimitReached: this.session?.durationLimitReached ?? false,
       remainingSeconds: this.session ? Math.max(0, 3_600 - this.session.elapsedSeconds) : null,
       canRetryStop: this.session?.state === "failed" && this.session.canRetryStop,
-      recoveryDirectories: this.session?.recoveryDirectories ?? (project ? [project.workDirectory] : []),
+      recoveryDirectories: this.session?.recoveryDirectories ?? (project ? [project.workDirectory] : this.cancelledRecoveryDirectories),
       previewFrame: this.session?.previewFrame ?? null,
       segmentCount: this.session?.segmentCount ?? this.segmentCount,
       previewPath: this.previewPath ?? null,
@@ -93,6 +96,7 @@ class RecorderWorker {
     this.segmentCount = 0;
     this.quality = ["high", "balanced", "compact"].includes(options.quality) ? options.quality : "balanced";
     this.previewPath = undefined;
+    this.previewResult = undefined;
     this.voicePath = undefined;
     this.voiceMode = "original";
     this.voiceSyncMs = 0;
@@ -114,6 +118,10 @@ class RecorderWorker {
       return this.status();
     } catch (error) {
       await this.session?.preserve();
+      if (this.session?.startCancelled) {
+        this.cancelledRecoveryDirectories = this.session.recoveryDirectories;
+        this.session = undefined;
+      }
       throw error;
     }
   }
@@ -182,6 +190,7 @@ class RecorderWorker {
     if (this.rendering || this.previewing) throw new Error("A gravação já está sendo processada.");
     if (this.previewPath) return this.status();
     const project = this.project;
+    this.abortController = new AbortController();
     this.previewing = true;
     try {
       const rendered = await renderScreenProject(
@@ -189,6 +198,7 @@ class RecorderWorker {
         this.renderOptions(project, join(project.workDirectory, "preview", `auto-screen-preview-${this.voiceRevision}`), true),
       );
       this.previewPath = rendered.videoPath;
+      this.previewResult = rendered;
       this.previewing = false;
       return this.status();
     } catch (error) {
@@ -204,15 +214,16 @@ class RecorderWorker {
     if (!requested) throw new TypeError("O caminho de saída não foi informado.");
     const outputFile = extname(requested).toLocaleLowerCase() === ".mp4" ? requested : `${requested}.mp4`;
     const project = this.project;
+    this.abortController = new AbortController();
     this.rendering = true;
     try {
-      const rendered = await renderScreenProject(
-        project,
-        this.renderOptions(project, outputFile.slice(0, -4), false),
-      );
+      const rendered = this.previewPath && this.previewResult
+        ? await saveScreenPreview(project, this.previewResult, outputFile.slice(0, -4), this.abortController.signal)
+        : await renderScreenProject(project, this.renderOptions(project, outputFile.slice(0, -4), false));
       this.project = undefined;
       this.segmentCount = 0;
       this.previewPath = undefined;
+      this.previewResult = undefined;
       this.voicePath = undefined;
       this.voiceMode = "original";
       this.voiceSyncMs = 0;
@@ -237,6 +248,7 @@ class RecorderWorker {
     this.project = undefined;
     this.segmentCount = 0;
     this.previewPath = undefined;
+    this.previewResult = undefined;
     this.voicePath = undefined;
     this.voiceMode = "original";
     this.voiceSyncMs = 0;
@@ -265,6 +277,7 @@ class RecorderWorker {
     this.project = undefined;
     this.segmentCount = 0;
     this.previewPath = undefined;
+    this.previewResult = undefined;
     this.voicePath = undefined;
     this.voiceMode = "original";
     this.voiceSyncMs = 0;
@@ -288,6 +301,19 @@ class RecorderWorker {
     if (this.shuttingDown) throw new Error("O gravador está sendo encerrado; os arquivos foram preservados.");
     switch (command) {
       case "status": return this.status();
+      case "cancel-start":
+        if (this.session && ["starting", "recording"].includes(this.session.state)) {
+          this.session.startCancelled = true;
+          if (this.session.state === "recording") {
+            await this.session.preserve();
+            this.cancelledRecoveryDirectories = this.session.recoveryDirectories;
+            this.session = undefined;
+          }
+        }
+        return this.status();
+      case "cancel-processing":
+        if (this.previewing || this.rendering) this.abortController.abort();
+        return this.status();
       case "preserve": await this.session?.preserve(); return this.status();
       case "doctor": return await runDoctor();
       case "displays": return await listDisplays();
@@ -315,6 +341,7 @@ class RecorderWorker {
         this.webcamEffectsPending = backgroundBlur > 0 || faceRetouch > 0;
         this.voiceRevision += 1;
         this.previewPath = undefined;
+        this.previewResult = undefined;
         return this.status();
       }
       case "webcam-effects-apply": {
@@ -346,6 +373,7 @@ class RecorderWorker {
         this.voiceMode = "local";
         this.voiceRevision += 1;
         this.previewPath = undefined;
+        this.previewResult = undefined;
         return this.status();
       }
       case "voice-replace": {
@@ -360,6 +388,7 @@ class RecorderWorker {
         this.voiceMode = "openrouter";
         this.voiceRevision += 1;
         this.previewPath = undefined;
+        this.previewResult = undefined;
         return { status: this.status(), speedRatio: result.speedRatio };
       }
       case "voice-original": {
@@ -368,6 +397,7 @@ class RecorderWorker {
         this.voiceMode = "original";
         this.voiceRevision += 1;
         this.previewPath = undefined;
+        this.previewResult = undefined;
         return this.status();
       }
       case "voice-sync": {
@@ -383,6 +413,7 @@ class RecorderWorker {
           this.voiceSyncMs = milliseconds;
           this.voiceRevision += 1;
           this.previewPath = undefined;
+          this.previewResult = undefined;
         }
         return this.status();
       }
@@ -420,7 +451,7 @@ async function dispatch(message) {
 
 function receive(message) {
   // Estado e encerramento não podem esperar na fila de um encoder travado.
-  if (message?.command === "status" || message?.command === "shutdown") void dispatch(message);
+  if (["status", "shutdown", "cancel-start", "cancel-processing"].includes(message?.command)) void dispatch(message);
   else queue = queue.then(() => dispatch(message), () => dispatch(message));
 }
 

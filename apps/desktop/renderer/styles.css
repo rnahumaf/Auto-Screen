@@ -232,7 +232,15 @@ h2 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .toggle-row small { color: #7b8497; font-size: 11px; }
 .toggle-row input { width: 42px; height: 24px; accent-color: #4166c8; }
 
-.action-panel { display: flex; flex-direction: column; align-items: center; padding: 8px 0 18px; }
+.action-panel { position: sticky; bottom: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; padding: 12px; border-top: 1px solid #dce2e9; background: #f4f6f8; }
+.voice-advanced { grid-column: 1 / -1; }
+.voice-advanced summary { padding: 12px 0; cursor: pointer; font-size: 13px; font-weight: 650; }
+.voice-advanced[open] .voice-setup { margin-top: 10px; }
+.operation-notice { color: #526482; font-size: 13px; }
+.saving-panel > div:not(.spinner) { flex: 1; min-width: 0; }
+.saving-panel { flex-wrap: wrap; }
+#processingProgress { display: block; width: 100%; margin-top: 12px; accent-color: #3560c9; }
+button:focus-visible, summary:focus-visible { outline: 2px solid #3560c9; outline-offset: 3px; }
 .primary-button, .secondary-button { min-height: 43px; border-radius: 11px; font-weight: 750; }
 .primary-button {
   display: inline-flex;

@@ -45,7 +45,11 @@ export async function probeMedia(path: string, ffmpegPath = "ffmpeg"): Promise<M
         ...(stream.start_time === undefined || !Number.isFinite(Number(stream.start_time)) ? {} : { startTimeSeconds: Number(stream.start_time) }),
         ...(() => {
           const duration = Number(stream.duration ?? NaN);
-          const measured = Number.isFinite(duration) ? duration : parseDurationTag(stream.tags?.DURATION);
+          const tagEnd = parseDurationTag(stream.tags?.DURATION);
+          const start = Number(stream.start_time ?? 0);
+          // Matroska DURATION tags contain the stream end timestamp, not its span.
+          const measured = Number.isFinite(duration) ? duration : tagEnd === undefined ? undefined
+            : Math.max(0, tagEnd - (Number.isFinite(start) ? start : 0));
           return measured === undefined ? {} : { durationSeconds: measured };
         })(),
       };

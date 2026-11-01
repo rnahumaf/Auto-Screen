@@ -4,7 +4,7 @@ export { runDoctor } from "./doctor.js";
 export { probeMedia, probeVideoCadence } from "./ffmpeg.js";
 export { cleanupScreenProject, createScreenRecorder, ScreenRecorderSession } from "./recorder.js";
 export { inputToPhysicalPoint, inputToPhysicalRect, physicalToInputPoint } from "./coordinates.js";
-export { renderScreenProject } from "./render.js";
+export { renderScreenProject, saveScreenPreview } from "./render.js";
 export { loadScreenScript, runScreenScript } from "./script.js";
 export { buildSpeedMap, outputDuration, sourceToOutputTime } from "./timeline.js";
 export { validateCaptureProject, validateRecorderConfig, validateRenderOptions, validateScreenScript } from "./validation.js";

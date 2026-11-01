@@ -29,22 +29,24 @@ function render(nextState) {
 
   const phase = state.phase;
   const paused = phase === "paused";
-  const transitioning = ["starting", "pausing", "resuming", "stopping"].includes(phase);
+  const transitioning = ["starting", "cancelling", "pausing", "resuming", "stopping"].includes(phase);
 
-  timer.textContent = formatTime(state.elapsedSeconds);
+  const preparing = ["starting", "cancelling"].includes(phase);
+  timer.textContent = preparing ? `${((state.preparation?.elapsedMs ?? 0) / 1000).toFixed(1)} s de espera` : formatTime(state.elapsedSeconds);
+  statusDot.classList.toggle("preparing", transitioning);
   statusDot.classList.toggle("paused", paused);
   statusText.textContent = paused
     ? "Gravação pausada"
     : transitioning
-      ? phase === "stopping" ? "Finalizando captura" : "Preparando"
+      ? phase === "stopping" ? "Finalizando captura" : phase === "cancelling" ? "Cancelando" : "Preparando"
       : phase === "recording" && state.remainingSeconds !== null && state.remainingSeconds <= 60
         ? `Encerra em ${Math.ceil(state.remainingSeconds)} s`
         : phase === "recording" ? "Gravando" : "Captura encerrada";
 
   pauseButton.textContent = paused ? "Continuar" : "Pausar";
   pauseButton.disabled = busy || transitioning || !["recording", "paused"].includes(phase);
-  stopButton.textContent = transitioning ? "Encerrar" : "Parar";
-  stopButton.disabled = !transitioning && (busy || !["recording", "paused"].includes(phase));
+  stopButton.textContent = preparing ? "Cancelar" : transitioning ? "Encerrar" : "Parar";
+  stopButton.disabled = phase === "cancelling" || (!transitioning && (busy || !["recording", "paused"].includes(phase)));
 }
 
 pauseButton.addEventListener("click", async () => {
@@ -61,7 +63,13 @@ pauseButton.addEventListener("click", async () => {
 });
 
 stopButton.addEventListener("click", async () => {
-  if (["starting", "pausing", "resuming", "stopping"].includes(state?.phase)) {
+  if (["starting", "cancelling"].includes(state?.phase)) {
+    stopButton.disabled = true;
+    try { render(await unwrap(window.autoScreen.cancelOperation())); }
+    catch (error) { statusText.textContent = error instanceof Error ? error.message : String(error); }
+    return;
+  }
+  if (["starting", "cancelling", "pausing", "resuming", "stopping"].includes(state?.phase)) {
     try { await unwrap(window.autoScreen.requestQuit()); }
     catch (error) { statusText.textContent = error instanceof Error ? error.message : String(error); }
     return;

@@ -33,7 +33,8 @@ export function buildWebcamFilters(
     const padStart = Math.max(0, -segment.startOffsetSeconds);
     const frames = Math.max(1, Math.round(segment.durationSeconds * fps));
     lines.push(
-      `[${inputIndex}:v]trim=start=${number(start)},setpts=PTS-STARTPTS,` +
+      // Offsets are relative to the first video frame, not the container origin.
+      `[${inputIndex}:v]setpts=PTS-STARTPTS,trim=start=${number(start)},setpts=PTS-STARTPTS,` +
       `${padStart > 0 ? `tpad=start_mode=clone:start_duration=${number(padStart)},` : ""}` +
       `fps=${fps},tpad=stop_mode=clone:stop_duration=1,trim=end_frame=${frames},` +
       `scale=${innerSize}:${innerSize}:force_original_aspect_ratio=increase,` +

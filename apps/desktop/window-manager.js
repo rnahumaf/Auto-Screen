@@ -213,13 +213,39 @@ export class WindowManager {
     if (window && !window.isDestroyed()) window.destroy();
   }
 
-  async appendWebcamEffectsChunk(sender, token, bytes) {
+  async readWebcamEffectsSource(sender, token, start, end) {
+    const job = this.effectsJob;
+    if (!job || sender !== job.window.webContents || token !== job.token ||
+        !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end <= start ||
+        end > job.sourceSize || end - start > 8_000_000) {
+      throw new Error("Leitura do segmento da webcam inválida.");
+    }
+    const buffer = Buffer.alloc(end - start);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await job.sourceFile.read(buffer, offset, buffer.length - offset, start + offset);
+      if (bytesRead === 0) throw new Error("O segmento da webcam terminou durante a leitura.");
+      offset += bytesRead;
+    }
+    return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  }
+
+  async appendWebcamEffectsChunk(sender, token, bytes, position) {
     const job = this.effectsJob;
     if (!job || sender !== job.window.webContents || token !== job.token || !(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length > 8_000_000) {
       throw new Error("Trecho do filtro da webcam inválido.");
     }
-    await job.file.writeFile(bytes);
-    job.bytes += bytes.length;
+    const target = position ?? job.bytes;
+    if (!Number.isSafeInteger(target) || target < 0 || target > job.bytes + 8_000_000) {
+      throw new Error("Posição do trecho da webcam inválida.");
+    }
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesWritten } = await job.file.write(bytes, offset, bytes.length - offset, target + offset);
+      if (bytesWritten === 0) throw new Error("Não foi possível gravar o trecho da webcam.");
+      offset += bytesWritten;
+    }
+    job.bytes = Math.max(job.bytes, target + bytes.length);
     return true;
   }
 
@@ -232,7 +258,20 @@ export class WindowManager {
     return true;
   }
 
-  async processWebcamSegment(source, filters) {
+  cancelWebcamProcessing() {
+    this.effectsJob?.reject(new Error("Processamento cancelado. A gravação original foi mantida."));
+  }
+
+  reportWebcamProgress(sender, token, frames, seconds) {
+    const job = this.effectsJob;
+    if (!job || sender !== job.window.webContents || token !== job.token) return;
+    if (!Number.isSafeInteger(frames) || frames <= job.frames || !Number.isFinite(seconds) || seconds < 0) return;
+    job.frames = frames;
+    job.lastProgress = performance.now();
+    job.onProgress?.({ frames, seconds });
+  }
+
+  async processWebcamSegment(source, filters, onProgress, signal) {
     if (this.effectsJob) throw new Error("Já existe um filtro da webcam em andamento.");
     const window = new BrowserWindow({
       width: 640, height: 360, show: false, skipTaskbar: true,
@@ -243,39 +282,59 @@ export class WindowManager {
       },
     });
     window.setContentProtection(true);
-    const file = await open(source.output, "w");
+    let file;
+    let sourceFile;
     let timeout;
     let done = false;
     let failed = false;
     const completed = new Promise((resolvePromise, rejectPromise) => {
       this.effectsJob = {
-        window, file, token: randomUUID(), bytes: 0,
+        window, file, token: randomUUID(), bytes: 0, frames: 0, lastProgress: performance.now(), onProgress,
         resolve: () => { if (!done) { done = true; resolvePromise(); } },
         reject: (error) => { if (!done) { done = true; rejectPromise(error); } },
       };
     });
+    // O cancelamento pode chegar enquanto os arquivos ou a janela ainda abrem.
+    void completed.catch(() => undefined);
+    const cancel = () => this.effectsJob?.window === window && this.cancelWebcamProcessing();
+    signal?.addEventListener("abort", cancel, { once: true });
     window.on("closed", () => this.effectsJob?.window === window && this.effectsJob.reject(new Error("A janela do filtro da webcam foi encerrada.")));
     try {
+      if (signal?.aborted) throw new Error("Processamento cancelado. A gravação original foi mantida.");
+      file = await open(source.output, "w");
+      this.effectsJob.file = file;
+      if (signal?.aborted) throw new Error("Processamento cancelado. A gravação original foi mantida.");
+      sourceFile = await open(source.input, "r");
+      const { size: sourceSize } = await sourceFile.stat();
+      this.effectsJob.sourceFile = sourceFile;
+      this.effectsJob.sourceSize = sourceSize;
       await window.loadFile(this.rendererFile("camera-filter.html"));
       const job = this.effectsJob;
+      if (signal?.aborted) throw new Error("Processamento cancelado. A gravação original foi mantida.");
       window.webContents.send("webcam-effects:configure", {
         token: job.token,
-        sourceUrl: pathToFileURL(source.input).href,
+        sourceSize: job.sourceSize,
         filters,
         modelUrls: this.cameraModelUrls(),
       });
-      timeout = setTimeout(() => job.reject(new Error("O processamento da webcam excedeu o tempo esperado.")), Math.max(90_000, (source.durationSeconds * 2 + 60) * 1_000));
+      timeout = setInterval(() => {
+        if (performance.now() - job.lastProgress > 90_000) {
+          job.reject(new Error("O filtro ficou 90 segundos sem produzir quadros. Tente novamente ou reduza os filtros; a gravação original foi mantida."));
+        }
+      }, 1_000);
       await completed;
       return source.output;
     } catch (error) {
       failed = true;
       throw error;
     } finally {
-      clearTimeout(timeout);
+      clearInterval(timeout);
+      signal?.removeEventListener("abort", cancel);
       this.effectsJob = undefined;
-      await file.close();
+      await file?.close();
+      await sourceFile?.close();
       if (!window.isDestroyed()) window.destroy();
-      if (failed) await rm(source.output, { force: true });
+      if (failed && file) await rm(source.output, { force: true });
     }
   }
 

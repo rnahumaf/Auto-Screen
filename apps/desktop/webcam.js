@@ -6,23 +6,31 @@ import { performance } from "node:perf_hooks";
 import { probeMedia } from "./runtime/index.js";
 
 const READY_TIMEOUT_MS = 10_000;
+// Select an arriving frame without the lookahead needed by the CFR fps filter.
+const PREVIEW_FILTER = "select='isnan(prev_selected_t)+gte(t-prev_selected_t,1/15-0.000001)'";
 
 function consumeJpegBytes(target, chunk) {
   target.previewBuffer = Buffer.concat([target.previewBuffer, chunk]);
+  let latestJpeg;
   while (true) {
     const start = target.previewBuffer.indexOf(Buffer.from([0xff, 0xd8]));
-    if (start < 0) { target.previewBuffer = Buffer.alloc(0); return; }
+    if (start < 0) {
+      // A marker can straddle two stdout chunks.
+      target.previewBuffer = target.previewBuffer.at(-1) === 0xff ? Buffer.from([0xff]) : Buffer.alloc(0);
+      break;
+    }
     if (start > 0) target.previewBuffer = target.previewBuffer.subarray(start);
     const end = target.previewBuffer.indexOf(Buffer.from([0xff, 0xd9]), 2);
     if (end < 0) {
       if (target.previewBuffer.length > 1_000_000) target.previewBuffer = Buffer.alloc(0);
-      return;
+      break;
     }
-    const jpeg = target.previewBuffer.subarray(0, end + 2);
-    target.previewFrame = { at: Date.now(), jpeg: jpeg.toString("base64") };
+    latestJpeg = target.previewBuffer.subarray(0, end + 2);
     target.previewBuffer = target.previewBuffer.subarray(end + 2);
-    target.onPreviewFrame?.(target.previewFrame);
   }
+  if (!latestJpeg) return;
+  target.previewFrame = { at: Date.now(), jpeg: latestJpeg.toString("base64") };
+  target.onPreviewFrame?.(target.previewFrame);
 }
 
 export async function listDirectShowDevices(kind, ffmpegPath = process.env.AUTO_SCREEN_FFMPEG_PATH ?? "ffmpeg") {
@@ -89,13 +97,14 @@ export class WebcamRecorderSession {
       "-y", "-hide_banner", "-loglevel", "warning", "-progress", "pipe:2", "-stats_period", "0.05",
       "-thread_queue_size", "512", "-use_video_device_timestamps", "false", "-f", "dshow", "-i",
       this.microphoneDeviceId ? `video=${this.deviceId}:audio=${this.microphoneDeviceId}` : `video=${this.deviceId}`,
-      "-filter_complex", "[0:v]split=2[record-source][preview-source];[record-source]fps=30[record];[preview-source]fps=5,scale=320:-2[preview]",
+      "-filter_complex", `[0:v]split=2[record-source][preview-source];[record-source]fps=30[record];[preview-source]${PREVIEW_FILTER},scale=320:-2[preview]`,
       "-map", "[record]", ...(this.microphoneDeviceId ? ["-map", "0:a:0"] : ["-an"]),
-      "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+      "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "18",
       "-pix_fmt", "yuv420p", "-fps_mode", "passthrough",
       ...(this.microphoneDeviceId ? ["-af", "aresample=async=1000:first_pts=0", "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le"] : []),
       this.path,
-      "-map", "[preview]", "-an", "-c:v", "mjpeg", "-q:v", "5", "-f", "image2pipe", "pipe:1",
+      "-map", "[preview]", "-an", "-fps_mode", "vfr", "-c:v", "mjpeg", "-threads:v", "1", "-q:v", "5",
+      "-flush_packets", "1", "-f", "image2pipe", "pipe:1",
     ];
     const processStartedAt = performance.now();
     this.startedAtMs = processStartedAt;
@@ -233,8 +242,8 @@ export class WebcamPreviewSession {
     const args = [
       "-hide_banner", "-loglevel", "warning",
       "-use_video_device_timestamps", "false", "-f", "dshow", "-i", `video=${this.deviceId}`,
-      "-an", "-vf", "fps=10,scale=640:-2", "-c:v", "mjpeg", "-q:v", "4",
-      "-f", "image2pipe", "pipe:1",
+      "-an", "-vf", `${PREVIEW_FILTER},scale=640:-2`, "-fps_mode", "vfr", "-c:v", "mjpeg", "-threads:v", "1", "-q:v", "4",
+      "-flush_packets", "1", "-f", "image2pipe", "pipe:1",
     ];
     this.child = spawn(this.ffmpegPath, args, { windowsHide: true, shell: false, stdio: ["pipe", "pipe", "pipe"] });
     let stderr = "";

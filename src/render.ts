@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { audioFilterGraph, audioInputArguments, prepareAudioTracks } from "./audio.js";
@@ -221,5 +221,55 @@ export async function renderScreenProject(projectInput: CaptureProject, optionsI
       `Falha ao validar ou publicar o vídeo. Intermediários preservados em ${project.workDirectory}. ` +
       `${error instanceof Error ? error.message : String(error)}`,
     );
+  }
+}
+
+/** Publish an already rendered preview without changing its timestamps or encoding. */
+export async function saveScreenPreview(
+  project: CaptureProject, preview: RenderResult, outPrefix: string, abortSignal?: AbortSignal,
+): Promise<RenderResult> {
+  const videoPath = `${resolve(outPrefix)}.mp4`;
+  const manifestPath = `${resolve(outPrefix)}.json`;
+  const inside = relative(resolve(project.workDirectory), videoPath);
+  if (!inside || (!inside.startsWith(`..${sep}`) && inside !== ".." && !isAbsolute(inside))) {
+    throw new Error("Salve o vídeo fora da pasta temporária da gravação.");
+  }
+  const token = randomUUID();
+  const stagedVideo = `${videoPath}.auto-screen-${token}.mp4`;
+  const stagedManifest = `${manifestPath}.auto-screen-${token}.json`;
+  const checkCancelled = (): void => {
+    if (abortSignal?.aborted) throw new Error("Salvamento cancelado. A gravação original foi mantida.");
+  };
+  checkCancelled();
+  await mkdir(dirname(videoPath), { recursive: true });
+  try {
+    await copyFile(preview.videoPath, stagedVideo);
+    checkCancelled();
+    const ffmpeg = resolveFfmpegPath();
+    const probe = await probeMedia(stagedVideo, ffmpeg);
+    const cadence = await probeVideoCadence(stagedVideo, preview.manifest.output.fps, ffmpeg);
+    const video = probe.streams.find(stream => stream.codecType === "video");
+    const audio = probe.streams.find(stream => stream.codecType === "audio");
+    if (video?.codecName !== "h264" || audio?.codecName !== "aac" ||
+        video.width !== preview.manifest.output.width || video.height !== preview.manifest.output.height ||
+        Math.abs(probe.durationSeconds - preview.manifest.output.durationSeconds) > 0.001 ||
+        !cadence.constantFrameRate || cadence.frameCount !== preview.manifest.output.cadence.frameCount) {
+      throw new Error("A cópia da prévia não passou na validação. Gere a prévia novamente antes de salvar.");
+    }
+    const manifest = structuredClone(preview.manifest);
+    manifest.output.videoPath = videoPath;
+    const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+    await writeFile(stagedManifest, serialized, "utf8");
+    checkCancelled();
+    // Publication is a short transaction: cancellation cannot split the MP4/JSON pair.
+    await publishValidatedPair(stagedVideo, stagedManifest, videoPath, manifestPath, token);
+    try { await cleanupScreenProject(project); }
+    catch { /* Published media is valid; retain any intermediates that could not be removed. */ }
+    return { videoPath, manifestPath, manifest };
+  } finally {
+    await Promise.all([
+      rm(stagedVideo, { force: true }).catch(() => undefined),
+      rm(stagedManifest, { force: true }).catch(() => undefined),
+    ]);
   }
 }

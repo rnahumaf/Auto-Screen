@@ -59,6 +59,14 @@ const elements = {
   autoSave: document.querySelector("#autoSave"),
   startButton: document.querySelector("#startButton"),
   startHint: document.querySelector("#startHint"),
+  preparationPanel: document.querySelector("#preparationPanel"),
+  preparationTitle: document.querySelector("#preparationTitle"),
+  preparationDetail: document.querySelector("#preparationDetail"),
+  cancelStartButton: document.querySelector("#cancelStartButton"),
+  cancelProcessingButton: document.querySelector("#cancelProcessingButton"),
+  cancelSaveButton: document.querySelector("#cancelSaveButton"),
+  processingProgress: document.querySelector("#processingProgress"),
+  notice: document.querySelector("#operationNotice"),
   previewingPanel: document.querySelector("#previewingPanel"),
   processingTitle: document.querySelector("#processingTitle"),
   processingDescription: document.querySelector("#processingDescription"),
@@ -107,6 +115,8 @@ const elements = {
   retryPreviewButton: document.querySelector("#retryPreviewButton"),
   discardButton: document.querySelector("#discardButton"),
   savingPanel: document.querySelector("#savingPanel"),
+  savingTitle: document.querySelector("#savingTitle"),
+  savingDescription: document.querySelector("#savingDescription"),
   savedPanel: document.querySelector("#savedPanel"),
   savedPath: document.querySelector("#savedPath"),
   openOutput: document.querySelector("#openOutput"),
@@ -312,12 +322,12 @@ function applySettings(settings) {
 }
 
 function renderMicrophoneOptions() {
-  elements.microphoneDetails.hidden = false;
+  elements.microphoneDetails.hidden = !elements.microphoneEnabled.checked && !currentState?.voice?.hasMicrophone;
 }
 
 function renderWebcamOptions() {
   const enabled = elements.webcamEnabled.checked;
-  elements.webcamDetails.hidden = false;
+  elements.webcamDetails.hidden = !enabled;
   elements.webcamDisabledHint.hidden = enabled;
   elements.webcamBorderColorField.hidden = elements.webcamBorderSelect.value !== "color";
   elements.webcamBackgroundBlurValue.textContent = elements.webcamBackgroundBlur.value === "0" ? "Desligado" : `${elements.webcamBackgroundBlur.value}%`;
@@ -455,6 +465,18 @@ function renderState(state) {
   currentState = state;
 
   const phase = state.phase;
+  const preparing = ["starting", "cancelling"].includes(phase);
+  elements.preparationPanel.hidden = !preparing;
+  elements.preparationTitle.textContent = phase === "cancelling" ? "Cancelando preparação" : "Preparando gravação";
+  const seconds = ((state.preparation?.elapsedMs ?? 0) / 1000).toFixed(1);
+  elements.preparationDetail.textContent = `${state.preparation?.stage ?? "Preparando"} · ${seconds} s. A captura ainda não foi confirmada.`;
+  elements.cancelStartButton.disabled = phase === "cancelling";
+  elements.notice.textContent = state.notice ?? "";
+  elements.notice.hidden = !state.notice;
+  elements.cancelProcessingButton.disabled = state.processing?.stage === "Cancelando processamento";
+  elements.cancelSaveButton.disabled = elements.cancelProcessingButton.disabled;
+  elements.processingProgress.hidden = !Number.isFinite(state.processing?.fraction);
+  elements.processingProgress.value = state.processing?.fraction ?? 0;
   const hasProject = phase === "captured";
   const isPreviewing = phase === "previewing";
   const isSaving = phase === "rendering";
@@ -477,10 +499,11 @@ function renderState(state) {
   elements.saveOptionsPanel.hidden = !canConfigure;
   elements.actionPanel.hidden = !canConfigure;
   elements.previewingPanel.hidden = !isPreviewing && phase !== "stopping";
-  elements.processingTitle.textContent = phase === "stopping" ? "Finalizando captura" : "Preparando a prévia";
+  elements.processingTitle.textContent = phase === "stopping" ? "Finalizando captura" : state.processing?.stage ?? "Preparando a prévia";
+  elements.cancelProcessingButton.hidden = !isPreviewing;
   elements.processingDescription.textContent = phase === "stopping"
     ? "Encerrando os dispositivos e consolidando os trechos. Você pode fechar o aplicativo para interromper e preservar os arquivos."
-    : "Aplicando o cursor escolhido e codificando uma visualização local.";
+    : state.processing?.detail ?? "Aplicando o cursor escolhido e codificando uma visualização local.";
   elements.resultPanel.hidden = !hasProject;
   elements.voiceResultPanel.hidden = !hasProject || state.voice?.hasMicrophone !== true;
   elements.webcamResultPanel.hidden = !hasProject || state.webcam?.hasWebcam !== true;
@@ -504,7 +527,10 @@ function renderState(state) {
   elements.audioWarning.textContent = (state.audioWarnings ?? []).join(" ");
   elements.audioWarning.hidden = !hasProject || !elements.audioWarning.textContent;
   elements.savingPanel.hidden = !isSaving;
-  elements.savedPanel.hidden = !state.lastSavedPath || hasProject || isSaving;
+  elements.savingTitle.textContent = state.processing?.stage ?? "Salvando o MP4";
+  elements.savingDescription.textContent = state.processing?.detail ?? "Validando e preparando o arquivo final.";
+  elements.savedPanel.hidden = !state.lastSavedPath || !canConfigure;
+  renderMicrophoneOptions();
 
   setSourceCard(pendingMode);
   elements.selectionTitle.textContent = state.source?.label ?? "Nenhuma seleção";
@@ -735,9 +761,18 @@ elements.displaySelect.addEventListener("change", async () => {
   } catch (error) {
     showLocalError(error);
   } finally {
+    elements.startButton.textContent = "Iniciar gravação";
     setBusy(false);
   }
 });
+
+for (const button of [elements.cancelStartButton, elements.cancelProcessingButton, elements.cancelSaveButton]) {
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { renderState(await unwrap(window.autoScreen.cancelOperation())); }
+    catch (error) { showLocalError(error); button.disabled = false; }
+  });
+}
 
 elements.refreshDisplays.addEventListener("click", () => refreshDisplayList(pendingMode === "display"));
 
@@ -853,7 +888,10 @@ elements.chooseOutputDirectory.addEventListener("click", async () => {
 });
 
 elements.startButton.addEventListener("click", async () => {
+  if (busy) return;
   setBusy(true);
+  elements.startButton.textContent = "Preparando…";
+  elements.startHint.textContent = "Guardando preferências antes de iniciar a captura.";
   try {
     await settingsWrite;
     const state = await unwrap(window.autoScreen.startRecording(settingsFromControls()));
@@ -861,9 +899,18 @@ elements.startButton.addEventListener("click", async () => {
   } catch (error) {
     showLocalError(error);
   } finally {
+    elements.startButton.textContent = "Iniciar gravação";
     setBusy(false);
   }
 });
+
+for (const button of [elements.cancelStartButton, elements.cancelProcessingButton, elements.cancelSaveButton]) {
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { renderState(await unwrap(window.autoScreen.cancelOperation())); }
+    catch (error) { showLocalError(error); button.disabled = false; }
+  });
+}
 
 elements.retryPreviewButton.addEventListener("click", async () => {
   setBusy(true);

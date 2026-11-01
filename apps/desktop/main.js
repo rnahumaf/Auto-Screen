@@ -45,6 +45,7 @@ function registerIpc() {
   registerHandler("app:select-region", async () => await controller.selectRegion());
   registerHandler("app:update-settings", async (_event, patch) => await controller.updateSettings(patch));
   registerHandler("app:choose-output-directory", async () => await controller.chooseOutputDirectory());
+  registerHandler("recording:cancel-operation", async () => await controller.cancelOperation());
   registerHandler("recording:start", async (_event, options) => await controller.startRecording(options));
   registerHandler("recording:pause-resume", async () => await controller.pauseOrResume());
   registerHandler("recording:stop", async () => await controller.stopRecording());
@@ -63,8 +64,10 @@ function registerIpc() {
   registerHandler("voice:transcribe", async () => await controller.transcribeVoice());
   registerHandler("voice:generate", async (_event, options) => await controller.generateVoice(options));
   registerHandler("webcam-effects:apply", async (_event, options) => await controller.applyWebcamFilters(options));
-  registerHandler("webcam-effects:chunk", async (event, token, bytes) => await windows.appendWebcamEffectsChunk(event.sender, token, bytes));
+  registerHandler("webcam-effects:read-source", async (event, token, start, end) => await windows.readWebcamEffectsSource(event.sender, token, start, end));
+  registerHandler("webcam-effects:chunk", async (event, token, bytes, position) => await windows.appendWebcamEffectsChunk(event.sender, token, bytes, position));
   registerHandler("webcam-effects:complete", async (event, token, error) => await windows.completeWebcamEffects(event.sender, token, error));
+  ipcMain.on("webcam-effects:progress", (event, token, frames, seconds) => windows.reportWebcamProgress(event.sender, token, frames, seconds));
   ipcMain.on("region:confirm", (event, value) => windows.confirmRegion(event.sender, value));
   ipcMain.on("region:cancel", (event) => windows.cancelRegion(event.sender));
   ipcMain.on("overlay:camera-state", (event, state) => {

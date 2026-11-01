@@ -19,7 +19,7 @@
     "test:live-overlay": "electron test/live-overlay-smoke.mjs",
     "test:setup-preview": "electron test/setup-preview-smoke.mjs",
     "test:camera-quality": "electron test/camera-quality-smoke.mjs",
-    "check": "node --check main.js && node --check controller.js && node --check human-recorder.js && node --check webcam.js && node --check microphone.js && node --check webcam-effects.js && node --check voice.js && node --check openrouter.js && node --check secret-store.js && node --check settings.js && node --check worker.js && node --check worker-client.js && node --check window-manager.js && node --check preload.cjs && node --check renderer/app.js && node --check renderer/toolbar.js && node --check renderer/region.js && node --check renderer/camera-effects.js && node --check renderer/capture-overlay.js && node --check renderer/camera-filter.js"
+    "check": "node --check main.js && node --check controller.js && node --check human-recorder.js && node --check webcam.js && node --check microphone.js && node --check webcam-effects.js && node --check voice.js && node --check openrouter.js && node --check secret-store.js && node --check settings.js && node --check worker.js && node --check worker-client.js && node --check window-manager.js && node --check preload.cjs && node --check renderer/app.js && node --check renderer/toolbar.js && node --check renderer/region.js && node --check renderer/camera-effects.js && node --check renderer/capture-overlay.js && node --check renderer/camera-filter.js && tsc --ignoreConfig --allowJs --checkJs --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck recording-contract.js"
   },
   "devDependencies": {
     "electron": "44.1.1",
@@ -31,6 +31,7 @@
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",
     "@nut-tree-fork/nut-js": "4.2.6",
+    "mediabunny": "1.61.3",
     "spessasynth_core": "4.3.16",
     "zod": "4.4.3"
   },

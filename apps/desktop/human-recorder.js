@@ -254,6 +254,7 @@ export class HumanRecorderSession {
     this._state = "idle";
     this._segmentCount = 0;
     this.limitReached = false;
+    this.startCancelled = false;
   }
 
   get state() { return this._state; }
@@ -292,7 +293,12 @@ export class HumanRecorderSession {
     return remaining;
   }
 
+  checkStartCancelled() {
+    if (this.startCancelled) throw new Error("Preparação cancelada.");
+  }
+
   async openSegment() {
+    this.checkStartCancelled();
     if (this.webcamConfig) {
       this.currentWebcam = this.createWebcam({
         deviceId: this.webcamConfig.deviceId,
@@ -300,10 +306,12 @@ export class HumanRecorderSession {
         ffmpegPath: this.ffmpegPath,
       });
       await this.currentWebcam.start();
+      this.checkStartCancelled();
     }
     if (this.microphoneConfig && !this.webcamConfig) {
       this.currentMicrophone = this.createMicrophone({ deviceId: this.microphoneConfig.deviceId, ffmpegPath: this.ffmpegPath });
       await this.currentMicrophone.start();
+      this.checkStartCancelled();
     }
     const recorder = this.createRecorder({
       ...this.config,
@@ -313,6 +321,7 @@ export class HumanRecorderSession {
     this.currentRecorder = recorder;
     this.currentProject = undefined;
     await recorder.start();
+    this.checkStartCancelled();
     this.currentStartedAt = performance.now();
   }
 

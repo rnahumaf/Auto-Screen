@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("autoScreen", {
   selectRegion: () => invoke("app:select-region"),
   updateSettings: (patch) => invoke("app:update-settings", patch),
   chooseOutputDirectory: () => invoke("app:choose-output-directory"),
+  cancelOperation: () => invoke("recording:cancel-operation"),
   startRecording: (options) => invoke("recording:start", options),
   pauseOrResume: () => invoke("recording:pause-resume"),
   retryPreview: () => invoke("recording:retry-preview"),
@@ -71,6 +72,8 @@ contextBridge.exposeInMainWorld("autoScreen", {
     ipcRenderer.on("webcam-effects:configure", listener);
     return () => ipcRenderer.removeListener("webcam-effects:configure", listener);
   },
-  appendWebcamEffectsChunk: (token, bytes) => invoke("webcam-effects:chunk", token, bytes),
+  readWebcamEffectsSource: (token, start, end) => invoke("webcam-effects:read-source", token, start, end),
+  appendWebcamEffectsChunk: (token, bytes, position) => invoke("webcam-effects:chunk", token, bytes, position),
+  reportWebcamProgress: (token, frames, seconds) => ipcRenderer.send("webcam-effects:progress", token, frames, seconds),
   completeWebcamEffects: (token, error) => invoke("webcam-effects:complete", token, error),
 });

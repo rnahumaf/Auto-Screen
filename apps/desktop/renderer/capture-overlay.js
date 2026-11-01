@@ -9,6 +9,19 @@ let effects;
 let configured = false;
 let ready = false;
 let cameraConfig;
+let pendingJpeg;
+let frameScheduled = false;
+
+function scheduleFrame() {
+  if (frameScheduled || !configured || !pendingJpeg) return;
+  frameScheduled = true;
+  requestAnimationFrame(() => {
+    frameScheduled = false;
+    if (!configured || !pendingJpeg) return;
+    image.src = `data:image/jpeg;base64,${pendingJpeg}`;
+    pendingJpeg = undefined;
+  });
+}
 
 function positionCamera(config) {
   if (!config) { camera.hidden = true; return; }
@@ -43,6 +56,7 @@ async function configureCamera(config, modelUrls) {
       canvas.hidden = false;
     }
     configured = true;
+    scheduleFrame();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     showMessage(`Não foi possível preparar o filtro da webcam: ${detail}`);
@@ -83,7 +97,9 @@ image.addEventListener("load", () => {
   }
 });
 window.autoScreen.onOverlayFrame((jpeg) => {
-  if (configured && typeof jpeg === "string") image.src = `data:image/jpeg;base64,${jpeg}`;
+  if (typeof jpeg !== "string") return;
+  pendingJpeg = jpeg;
+  scheduleFrame();
 });
 window.autoScreen.onOverlayPaused((paused) => {
   document.body.classList.toggle("is-paused", paused === true);
