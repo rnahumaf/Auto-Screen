@@ -1,6 +1,6 @@
 {
   "name": "@rnaf/auto-screen",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Gravação e composição de tela sob controle agêntico para Windows.",
   "type": "module",
   "license": "MIT",
@@ -74,7 +74,7 @@
   "dependencies": {
     "@nut-tree-fork/nut-js": "4.2.6",
     "spessasynth_core": "4.3.16",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "22.15.21",

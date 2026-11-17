@@ -175,7 +175,8 @@ const captureProjectSchema = z.object({
     requestedAtSeconds: nonNegative, actualAtSeconds: nonNegative, durationSeconds: nonNegative,
     details: z.record(z.string(), z.unknown()),
   }).strict()).max(10_000),
-  pointerPath: z.array(z.object({ x: finite, y: finite, timeSeconds: nonNegative }).strict()).max(100_000),
+  // O observador Win32 pode emitir uma amostra a cada 4 ms durante uma hora.
+  pointerPath: z.array(z.object({ x: finite, y: finite, timeSeconds: nonNegative }).strict()).max(1_000_000),
   marks: z.array(z.object({ id: z.string().min(1), timeSeconds: nonNegative, intensity: finite.min(0).max(1) }).strict()).max(10_000),
   warnings: z.array(z.string()).max(10_000),
 }).strict();

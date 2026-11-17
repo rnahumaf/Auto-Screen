@@ -1,3 +1,9 @@
+# Auto-Screen 0.3.5
+
+- O Auto-Screen lê os tempos dos quadros conforme o FFprobe os emite. Isso evita o erro de JSON truncado ao finalizar gravações longas, gerar a prévia ou salvar o MP4.
+- O cursor suavizado aceita a quantidade de amostras de uma gravação de até uma hora. A composição divide a trajetória em trechos e preserva os pontos de cliques e arrastes, inclusive em gravações com pausas.
+- Atualizadas as dependências de validação de dados e redirecionamento HTTP para versões corrigidas.
+
 # Auto-Screen 0.3.4 (compilação local)
 
 - Corrigido o tamanho das camadas internas quando a prévia já havia dimensionado o canvas. Isso eliminou o pequeno retângulo nítido e o rosto borrado. O desfoque também passou a usar um modelo local dedicado a separar a pessoa do fundo; quando a máscara falha, a prévia mantém o quadro nítido e informa que o desfoque foi suspenso.

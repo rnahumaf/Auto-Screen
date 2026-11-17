@@ -130,7 +130,7 @@ export async function renderScreenProject(projectInput: CaptureProject, optionsI
     `fps=fps=${fps}:start_time=0,trim=end_frame=${expectedFrames},setpts=PTS-STARTPTS[timed]`,
   );
   graph.push(`[timed]${cameraPlan.filter}[camera]`);
-  graph.push(...buildCursorFilters(normalizedProject, speedMap, cameraPlan.frames, width, height, fps, finalDuration, options.cursor, cursorSprite));
+  graph.push(...await buildCursorFilters(normalizedProject, speedMap, cameraPlan.frames, width, height, fps, finalDuration, options.cursor, cursorSprite));
   graph.push(...buildWebcamFilters(normalizedProject, speedMap, width, height, fps, finalDuration, expectedFrames));
   graph.push(captions.length > 0 ? `[webcamout]ass=filename='${escapeFilterPath(assPath)}'[vout]` : "[webcamout]null[vout]");
   graph.push(...audioFilterGraph(preparedAudio, finalDuration, 1 + (project.webcam?.segments.length ?? 0)));

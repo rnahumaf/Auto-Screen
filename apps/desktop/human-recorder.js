@@ -81,10 +81,9 @@ function shiftedTimeline(projects) {
       requestedAtSeconds: action.requestedAtSeconds + offset,
       actualAtSeconds: action.actualAtSeconds + offset,
     })));
-    pointerPath.push(...project.pointerPath.map((sample) => ({
-      ...sample,
-      timeSeconds: sample.timeSeconds + offset,
-    })));
+    for (const sample of project.pointerPath) {
+      pointerPath.push({ ...sample, timeSeconds: sample.timeSeconds + offset });
+    }
     marks.push(...project.marks.map((mark) => ({
       ...mark,
       timeSeconds: mark.timeSeconds + offset,

@@ -2,7 +2,7 @@
 
 Auto-Screen é uma biblioteca TypeScript experimental para um harness de código gravar interações reais no Windows e transformá-las em vídeos de demonstração. O agente pode mover e clicar o mouse, rolar uma interface e registrar marcas; depois, o mesmo projeto recebe câmera virtual, mudanças de velocidade, legendas e música.
 
-O código deste checkout está na versão `0.3.4`.
+O código deste checkout está na versão `0.3.5`.
 
 ## O que já funciona
 
@@ -30,7 +30,7 @@ Baixe a versão mais recente em [GitHub Releases](https://github.com/rnahumaf/Au
 - **Setup x64:** instalador assistido, com escolha de pasta e atalhos no Desktop e no menu Iniciar.
 - **Portable x64:** executável autônomo que não precisa ser instalado.
 
-Na compilação 0.3.4 deste checkout, a webcam é opcional. É possível escolher três tamanhos, formato quadrado ou circular, borda ausente, preta ou colorida, nove posições, desfoque do fundo e retoque facial. Uma prévia ao vivo mostra os filtros antes de iniciar e permite comparar com a imagem original; os mesmos ajustes podem ser reaplicados à webcam capturada antes de salvar. Durante a captura, uma borda luminosa indica a área gravada e mostra a câmera no local escolhido. A interface também guarda FPS, cursor, qualidade do MP4, pasta de saída e salvamento automático. Pausar remove os intervalos da tela, webcam e microfone.
+A webcam é opcional. É possível escolher três tamanhos, formato quadrado ou circular, borda ausente, preta ou colorida, nove posições, desfoque do fundo e retoque facial. Uma prévia ao vivo mostra os filtros antes de iniciar e permite comparar com a imagem original; os mesmos ajustes podem ser reaplicados à webcam capturada antes de salvar. Durante a captura, uma borda luminosa indica a área gravada e mostra a câmera no local escolhido. A interface também guarda FPS, cursor, qualidade do MP4, pasta de saída e salvamento automático. Pausar remove os intervalos da tela, webcam e microfone.
 
 O aplicativo já inclui Electron, o runtime do Auto-Screen e suas dependências Node; não é necessário instalar Node.js para usá-lo. FFmpeg e FFprobe continuam sendo requisitos externos e o diagnóstico da tela inicial verifica se estão disponíveis. As compilações públicas atuais não possuem assinatura de código comercial, portanto o Windows SmartScreen pode pedir confirmação. Compare o arquivo baixado com `SHA256SUMS.txt` publicado na mesma release.
 

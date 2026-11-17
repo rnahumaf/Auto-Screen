@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createInterface } from "node:readline";
 
 export interface ProcessResult {
   code: number;
@@ -13,6 +14,7 @@ export async function runProcess(
     cwd?: string;
     input?: string;
     allowFailure?: boolean;
+    onStdoutLine?: (line: string) => void;
     abortSignal?: AbortSignal;
     gracefulAbortInput?: string;
     gracefulAbortTimeoutMs?: number;
@@ -35,6 +37,11 @@ export async function runProcess(
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => { stdout = append(stdout, chunk); });
     child.stderr.on("data", (chunk: string) => { stderr = append(stderr, chunk); });
+    if (options.onStdoutLine) {
+      const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+      lines.on("line", options.onStdoutLine);
+      lines.once("error", reject);
+    }
     const abort = (): void => {
       aborted = true;
       if (child.exitCode !== null) return;

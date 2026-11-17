@@ -71,31 +71,44 @@ export async function probeVideoCadence(
   ffmpegPath = "ffmpeg",
   progress: { duplicatedFrames?: number; droppedFrames?: number } = {},
 ): Promise<VideoCadence> {
-  const result = await runProcess(resolveFfprobePath(ffmpegPath), [
-    "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_frames",
-    "-show_entries", "stream=avg_frame_rate,nb_read_frames:frame=best_effort_timestamp_time", "-of", "json", path,
-  ]);
-  const value = JSON.parse(result.stdout) as {
-    streams?: Array<{ avg_frame_rate?: string; nb_read_frames?: string }>;
-    frames?: Array<{ best_effort_timestamp_time?: string }>;
-  };
-  const times = (value.frames ?? []).map((frame) => Number(frame.best_effort_timestamp_time)).filter(Number.isFinite);
+  let timestampCount = 0;
+  let firstTime = 0;
+  let lastTime = 0;
   let maximumGapSeconds = 0;
-  for (let index = 1; index < times.length; index += 1) {
-    maximumGapSeconds = Math.max(maximumGapSeconds, (times[index] as number) - (times[index - 1] as number));
-  }
-  const stream = value.streams?.[0];
-  const frameCount = Number(stream?.nb_read_frames ?? times.length);
-  const measuredFps = rational(stream?.avg_frame_rate) ||
-    (times.length > 1 ? (times.length - 1) / ((times.at(-1) as number) - (times[0] as number)) : 0);
+  let reportedFrameCount = Number.NaN;
+  let reportedFps = 0;
+  // A saída por quadro pode exceder o trecho que runProcess guarda para diagnóstico.
+  await runProcess(resolveFfprobePath(ffmpegPath), [
+    "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_frames",
+    "-show_entries", "stream=avg_frame_rate,nb_read_frames:frame=best_effort_timestamp_time", "-of", "flat", path,
+  ], {
+    onStdoutLine: (line) => {
+      const [key, rawValue] = line.split("=", 2);
+      if (!key || !rawValue) return;
+      const value = rawValue.replace(/^"|"$/g, "");
+      if (key === "streams.stream.0.avg_frame_rate") {
+        reportedFps = rational(value);
+      } else if (key === "streams.stream.0.nb_read_frames") {
+        reportedFrameCount = Number(value);
+      } else if (key.startsWith("frames.frame.") && key.endsWith(".best_effort_timestamp_time")) {
+        const time = Number(value);
+        if (!Number.isFinite(time)) return;
+        if (timestampCount === 0) firstTime = time;
+        else maximumGapSeconds = Math.max(maximumGapSeconds, time - lastTime);
+        lastTime = time;
+        timestampCount += 1;
+      }
+    },
+  });
+  const measuredFps = reportedFps || (timestampCount > 1 && lastTime > firstTime ? (timestampCount - 1) / (lastTime - firstTime) : 0);
   const maximumGapMs = maximumGapSeconds * 1_000;
   return {
-    frameCount: Number.isFinite(frameCount) ? frameCount : times.length,
+    frameCount: Number.isFinite(reportedFrameCount) ? reportedFrameCount : timestampCount,
     measuredFps: Number(measuredFps.toFixed(6)),
     maximumGapMs: Number(maximumGapMs.toFixed(3)),
     duplicatedFrames: Math.max(0, Math.trunc(progress.duplicatedFrames ?? 0)),
     droppedFrames: Math.max(0, Math.trunc(progress.droppedFrames ?? 0)),
-    constantFrameRate: times.length < 2 || maximumGapMs <= (1_000 / requestedFps) * 1.25,
+    constantFrameRate: timestampCount < 2 || maximumGapMs <= (1_000 / requestedFps) * 1.25,
   };
 }
 
@@ -123,6 +136,7 @@ export async function checkFfmpeg(ffmpegPath = "ffmpeg"): Promise<DoctorCheck[]>
     ["fps", /\bfps\b/.test(filterText)],
     ["zoompan", filterText.includes("zoompan")],
     ["overlay/geq", filterText.includes(" overlay ") && filterText.includes(" geq ")],
+    ["sendcmd", filterText.includes(" sendcmd ")],
     ["crop/scale", filterText.includes(" crop ") && filterText.includes(" scale ")],
     ["subtitles/ass", filterText.includes("subtitles") && filterText.includes(" ass ")],
     ["setpts", filterText.includes("setpts")],

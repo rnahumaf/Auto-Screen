@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { projectPointToOutput, type CameraFrame } from "./camera.js";
 import { escapeFilterPath } from "./captions.js";
 import { sourceToOutputTime } from "./timeline.js";
@@ -17,6 +18,10 @@ interface CursorSpriteMetrics {
   hotspotX: number;
   hotspotY: number;
 }
+
+const MAX_CURSOR_EXPRESSION_POINTS = 1_500;
+const CURSOR_OVERLAY = "overlay@screenCursor";
+const CLICK_OVERLAY = "overlay@screenClick";
 
 function number(value: number): string {
   return Number(value.toFixed(4)).toString();
@@ -54,44 +59,42 @@ function parseColor(value: string): { red: number; green: number; blue: number; 
   };
 }
 
-function simplifyTimedPoints(points: TimedPoint[], initialTolerance = 0.75, maximumPoints = 1_500): TimedPoint[] {
+function simplifyTimedPoints(points: TimedPoint[], tolerance: number): TimedPoint[] {
   if (points.length <= 2) return points;
-  const simplify = (tolerance: number): TimedPoint[] => {
-    const keep = new Set<number>([0, points.length - 1]);
-    points.forEach((point, index) => { if (point.anchored) keep.add(index); });
-    const stack: Array<[number, number]> = [[0, points.length - 1]];
-    while (stack.length > 0) {
-      const [startIndex, endIndex] = stack.pop() as [number, number];
-      const start = points[startIndex] as TimedPoint;
-      const end = points[endIndex] as TimedPoint;
-      const duration = end.timeSeconds - start.timeSeconds;
-      let maximumError = 0;
-      let maximumIndex = -1;
-      for (let index = startIndex + 1; index < endIndex; index += 1) {
-        const point = points[index] as TimedPoint;
-        const progress = duration <= 0 ? 0 : (point.timeSeconds - start.timeSeconds) / duration;
-        const expectedX = start.x + (end.x - start.x) * progress;
-        const expectedY = start.y + (end.y - start.y) * progress;
-        const error = Math.hypot(point.x - expectedX, point.y - expectedY);
-        if (error > maximumError) {
-          maximumError = error;
-          maximumIndex = index;
-        }
-      }
-      if (maximumIndex >= 0 && maximumError > tolerance) {
-        keep.add(maximumIndex);
-        stack.push([startIndex, maximumIndex], [maximumIndex, endIndex]);
+  const keep = new Set<number>([0]);
+  const stack: Array<[number, number]> = [];
+  let previousAnchor = 0;
+  // Simplificar entre âncoras mantém o trecho que será de fato interpolado.
+  for (let index = 1; index < points.length; index += 1) {
+    if (!points[index]?.anchored && index !== points.length - 1) continue;
+    keep.add(index);
+    if (index > previousAnchor + 1) stack.push([previousAnchor, index]);
+    previousAnchor = index;
+  }
+  while (stack.length > 0) {
+    const [startIndex, endIndex] = stack.pop() as [number, number];
+    const start = points[startIndex] as TimedPoint;
+    const end = points[endIndex] as TimedPoint;
+    const duration = end.timeSeconds - start.timeSeconds;
+    let maximumError = 0;
+    let maximumIndex = -1;
+    for (let index = startIndex + 1; index < endIndex; index += 1) {
+      const point = points[index] as TimedPoint;
+      const progress = duration <= 0 ? 0 : (point.timeSeconds - start.timeSeconds) / duration;
+      const expectedX = start.x + (end.x - start.x) * progress;
+      const expectedY = start.y + (end.y - start.y) * progress;
+      const error = Math.hypot(point.x - expectedX, point.y - expectedY);
+      if (error > maximumError) {
+        maximumError = error;
+        maximumIndex = index;
       }
     }
-    return [...keep].sort((a, b) => a - b).map((index) => points[index] as TimedPoint);
-  };
-  let tolerance = initialTolerance;
-  let simplified = simplify(tolerance);
-  while (simplified.length > maximumPoints) {
-    tolerance *= 1.5;
-    simplified = simplify(tolerance);
+    if (maximumIndex >= 0 && maximumError > tolerance) {
+      keep.add(maximumIndex);
+      stack.push([startIndex, maximumIndex], [maximumIndex, endIndex]);
+    }
   }
-  return simplified;
+  return points.filter((_, index) => keep.has(index));
 }
 
 function smoothTimedPoints(points: TimedPoint[], amount: number): TimedPoint[] {
@@ -192,21 +195,53 @@ function mergeTimedPoints(points: TimedPoint[]): TimedPoint[] {
 }
 
 function outputPointerPath(
-  project: CaptureProject, speedMap: ResolvedSpeedSegment[], frames: CameraFrame[], width: number, height: number, fps: number,
+  project: CaptureProject, speedMap: ResolvedSpeedSegment[], frames: CameraFrame[], width: number, height: number,
   smoothing: number,
 ): TimedPoint[] {
   const { points: anchors, dragRanges } = clickAnchors(project, speedMap, frames, width, height);
+  dragRanges.sort((a, b) => a.start - b.start);
   const points: TimedPoint[] = [];
+  let nextDrag = 0;
+  let dragEnd = -Infinity;
   for (const sample of project.pointerPath) {
     const timeSeconds = sourceToOutputTime(sample.timeSeconds, speedMap);
-    const point = projectPointToOutput(sample, timeSeconds, frames, project.capture.bounds, width, height);
     const previous = points.at(-1);
     if (previous && timeSeconds <= previous.timeSeconds) continue;
-    const anchored = dragRanges.some(({ start, end }) => timeSeconds >= start && timeSeconds <= end);
-    points.push({ timeSeconds, ...point, anchored });
+    let drag = dragRanges[nextDrag];
+    while (drag && drag.start <= timeSeconds) {
+      dragEnd = Math.max(dragEnd, drag.end);
+      drag = dragRanges[++nextDrag];
+    }
+    const point = projectPointToOutput(sample, timeSeconds, frames, project.capture.bounds, width, height);
+    points.push({ timeSeconds, ...point, anchored: timeSeconds <= dragEnd });
   }
-  const smoothed = smoothTimedPoints(mergeTimedPoints([...points, ...anchors]), smoothing);
-  return simplifyTimedPoints(smoothed, Math.max(0.5, 30 / fps));
+  return smoothTimedPoints(mergeTimedPoints([...points, ...anchors]), smoothing);
+}
+
+async function writeCursorPositionCommands(
+  path: string, points: TimedPoint[], fps: number, sprite: CursorSpriteMetrics, ringSize?: number,
+): Promise<void> {
+  const commands: string[] = [];
+  const tolerance = Math.max(0.5, 30 / fps);
+  // Trechos adjacentes compartilham um ponto para preservar a posição na transição.
+  for (let start = 0; start < points.length; start += MAX_CURSOR_EXPRESSION_POINTS - 1) {
+    const end = Math.min(points.length, start + MAX_CURSOR_EXPRESSION_POINTS);
+    const chunk = simplifyTimedPoints(points.slice(start, end), tolerance);
+    const x = piecewise(chunk, "x");
+    const y = piecewise(chunk, "y");
+    const time = start === 0 ? "0" : (points[start] as TimedPoint).timeSeconds.toFixed(6);
+    const positions = [
+      `${CURSOR_OVERLAY} x '${x}-${number(sprite.hotspotX)}'`,
+      `${CURSOR_OVERLAY} y '${y}-${number(sprite.hotspotY)}'`,
+    ];
+    if (ringSize !== undefined) {
+      const offset = Math.round(ringSize / 2);
+      positions.push(`${CLICK_OVERLAY} x '${x}-${offset}'`, `${CLICK_OVERLAY} y '${y}-${offset}'`);
+    }
+    commands.push(`${time} ${positions.join(", ")};`);
+    if (end === points.length) break;
+  }
+  await writeFile(path, `${commands.join("\n")}\n`, "utf8");
 }
 
 function cursorSpriteMetrics(size: number): CursorSpriteMetrics {
@@ -257,7 +292,7 @@ export async function writeCursorSpriteAss(path: string, size: number): Promise<
   return metrics;
 }
 
-export function buildCursorFilters(
+export async function buildCursorFilters(
   project: CaptureProject,
   speedMap: ResolvedSpeedSegment[],
   frames: CameraFrame[],
@@ -269,33 +304,31 @@ export function buildCursorFilters(
   spriteAss?: { path: string; metrics: CursorSpriteMetrics },
   inputLabel = "camera",
   outputLabel = "cursorout",
-): string[] {
+): Promise<string[]> {
   if (project.capture.cursorMode !== "software") return [`[${inputLabel}]null[${outputLabel}]`];
-  const points = outputPointerPath(project, speedMap, frames, width, height, fps, options?.smoothing ?? 0);
+  const points = outputPointerPath(project, speedMap, frames, width, height, options?.smoothing ?? 0);
   if (points.length === 0) return [`[${inputLabel}]null[${outputLabel}]`];
   const size = options?.size ?? Math.max(24, Math.round(height * 0.036));
-  const x = piecewise(points, "x");
-  const y = piecewise(points, "y");
   if (!spriteAss) throw new Error("O sprite vetorial do cursor não foi preparado.");
   const sprite = spriteAss.metrics;
-  const lines = [
-    `color=c=black:s=${sprite.width}x${sprite.height}:r=${fps}:d=${number(durationSeconds)},format=rgba,ass=filename='${escapeFilterPath(spriteAss.path)}',colorkey=black:0.035:0.12[cursorSprite]`,
-    `[${inputLabel}][cursorSprite]overlay=x='${x}-${number(sprite.hotspotX)}':y='${y}-${number(sprite.hotspotY)}':eval=frame:eof_action=pass[cursorBase]`,
-  ];
   const clickIndicator = options?.clickIndicator ?? true;
   const clickTimes = project.actions.filter((action) => action.type === "click")
     .map((action) => sourceToOutputTime(action.requestedAtSeconds, speedMap));
-  if (!clickIndicator || clickTimes.length === 0) {
-    lines.push(`[cursorBase]null[${outputLabel}]`);
-    return lines;
-  }
-  const ringSize = Math.round(size * 1.8);
+  const ringSize = clickIndicator && clickTimes.length > 0 ? Math.round(size * 1.8) : undefined;
+  const commandsPath = join(dirname(spriteAss.path), "cursor-positions.txt");
+  await writeCursorPositionCommands(commandsPath, points, fps, sprite, ringSize);
+  const lines = [
+    `color=c=black:s=${sprite.width}x${sprite.height}:r=${fps}:d=${number(durationSeconds)},format=rgba,ass=filename='${escapeFilterPath(spriteAss.path)}',colorkey=black:0.035:0.12[cursorSprite]`,
+    `[${inputLabel}]sendcmd=f='${escapeFilterPath(commandsPath)}'[cursorInput]`,
+    `[cursorInput][cursorSprite]${CURSOR_OVERLAY}=eval=frame:eof_action=pass[${ringSize === undefined ? outputLabel : "cursorBase"}]`,
+  ];
+  if (ringSize === undefined) return lines;
   const radius = ringSize * 0.38;
   const { red, green, blue, alpha } = parseColor(options?.clickColor ?? "#16B8F3CC");
   const enabled = clickTimes.map((time) => `between(t,${number(time)},${number(time + 0.22)})`).join("+");
   lines.push(
     `color=c=black@0.0:s=${ringSize}x${ringSize}:r=${fps}:d=${number(durationSeconds)},format=rgba,geq=r='${red}':g='${green}':b='${blue}':a='if(lt(abs(sqrt((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2))-${number(radius)}),2.5),${alpha},0)'[clickSprite]`,
-    `[cursorBase][clickSprite]overlay=x='${x}-${Math.round(ringSize / 2)}':y='${y}-${Math.round(ringSize / 2)}':eval=frame:eof_action=pass:enable='gt(${enabled},0)'[${outputLabel}]`,
+    `[cursorBase][clickSprite]${CLICK_OVERLAY}=eval=frame:eof_action=pass:enable='gt(${enabled},0)'[${outputLabel}]`,
   );
   return lines;
 }
