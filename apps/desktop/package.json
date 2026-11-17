@@ -40,7 +40,6 @@
     "productName": "Auto-Screen",
     "copyright": "Copyright © 2026 Rodrigo Nahum",
     "asar": true,
-    "electronDist": "node_modules/electron/dist",
     "asarUnpack": [
       "node_modules/@nut-tree-fork/libnut*/**/*"
     ],
